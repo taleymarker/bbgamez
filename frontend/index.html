@@ -155,7 +155,13 @@
 
                 <section id="friendsPage" class="page" style="display:none;">
                     <div class="section-header">
-                        <h2 class="section-title"><i class="fas fa-user-friends"></i> Friends</h2>
+                        <div class="friends-header-title">
+                            <h2 class="section-title"><i class="fas fa-user-friends"></i> Friends</h2>
+                            <div class="friends-header-counts">
+                                <span><strong id="friendsCount">0</strong> friends</span>
+                                <span><strong id="pendingCount">0</strong> pending</span>
+                            </div>
+                        </div>
                         <div class="friends-tab-nav" id="friendsTabNav" style="display:none;">
                             <button class="friends-tab cat-tab active" data-tab="overview">Overview</button>
                             <button class="friends-tab cat-tab" data-tab="manage">Manage</button>
@@ -173,10 +179,6 @@
                     <div id="friendsContent" style="display:none;" class="friends-tabs-shell">
                         <div class="friends-tab-panels">
                             <div class="friends-tab-panel active" data-panel="overview">
-                                <div class="friends-stats">
-                                    <div class="stat-card"><div class="stat-number" id="friendsCount">0</div><div class="stat-label">Friends</div></div>
-                                    <div class="stat-card"><div class="stat-number" id="pendingCount">0</div><div class="stat-label">Pending</div></div>
-                                </div>
                                 <ul id="friendsList" class="friends-list"></ul>
                             </div>
                             <div class="friends-tab-panel" data-panel="manage">

@@ -1198,6 +1198,30 @@ input, select, textarea, button,
 }
 #friendsPage .games-section {display:flex; flex-direction:column; gap:18px;}
 
+.friends-header-title {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.friends-header-counts {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.friends-header-counts span {
+    white-space: nowrap;
+}
+
+.friends-header-counts strong {
+    color: var(--text-primary);
+    font-weight: 700;
+}
+
 #friendsPage .empty-state {
     margin-top: 60px;
 }

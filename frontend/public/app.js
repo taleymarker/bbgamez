@@ -1838,7 +1838,7 @@
         }
     }
 
-        async function loadAdminAnalytics(force = false) {{
+    async function loadAdminAnalytics(force = false) {
         if (!state.user?.admin) return;
         const limit = 288;
         if (state.adminAnalytics && !force) { renderAdminAnalytics(); return; }
@@ -2410,7 +2410,6 @@
         });
         els.adminGamesList.appendChild(frag);
     }
-        }
 
     function renderAdminUsers() {
         if (!els.adminUsersList) return;

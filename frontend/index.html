@@ -326,10 +326,6 @@
                             <p class="muted-hint">Use a preset or fetch metadata from a site to mimic its title and favicon.</p>
                         </div>
                     </div>
-                    <div class="settings-footer-meta">
-                        <span class="muted-hint" id="settingsVersion">Version: loading...</span>
-                        <span class="muted-hint" id="settingsBackend">Backend: loading...</span>
-                    </div>
                     <div class="settings-actions single-row" id="settingsActions">
                         <div id="settingsFeedback" class="form-feedback"></div>
                         <div id="adminNotifyTests" style="display:none; gap:8px; flex-wrap:wrap; align-items:center;">
@@ -338,6 +334,15 @@
                             <button type="button" class="update-check-btn" id="adminNotifyError">Test Error</button>
                             <button type="button" class="update-check-btn" id="adminNotifyInfo">Test Info</button>
                         </div>
+                    </div>
+                    <div class="settings-footer-meta" style="margin-top:40px;">
+                        <span class="muted-hint" id="settingsVersion">Version: loading...</span>
+                        <span class="muted-hint" id="settingsBackend">Backend: loading...</span>
+                        <span class="muted-hint settings-legal-links">
+                            <a href="#" class="nav-link" data-page="privacy">Privacy Policy</a>
+                            <span aria-hidden="true">•</span>
+                            <a href="#" class="nav-link" data-page="terms">Terms of Service</a>
+                        </span>
                     </div>
                 </section>
 
@@ -686,24 +691,6 @@
             </div>
         </main>
     </div>
-
-    <footer class="floating-footer" aria-label="Site footer">
-        <div class="footer-card">
-            <div class="footer-brand">
-                <span class="footer-dot" aria-hidden="true"></span>
-                <span class="footer-title">bbgamez</span>
-            </div>
-            <ul class="footer-links" aria-label="Legal links">
-                <li class="nav-item footer-nav-item" data-page="privacy">
-                    <a href="#" class="nav-link footer-link">Privacy Policy</a>
-                </li>
-                <li class="footer-separator" aria-hidden="true">•</li>
-                <li class="nav-item footer-nav-item" data-page="terms">
-                    <a href="#" class="nav-link footer-link">Terms of Service</a>
-                </li>
-            </ul>
-        </div>
-    </footer>
 
     <div id="offlineOverlays" class="offline-overlays" style="display:none;">
         <div id="gameOfflineOverlay" class="game-offline-overlay">

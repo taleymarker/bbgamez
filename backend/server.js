@@ -26,7 +26,6 @@ const DEFAULTS_FILE = path.join(DATA_DIR, 'default-settings.yml');
 const LEGACY_CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const REQUESTS_FILE = path.join(DATA_DIR, 'requests.json');
 const REPORTS_FILE = path.join(DATA_DIR, 'reports.json');
-const BANNER_FILE = path.join(DATA_DIR, 'banner.yaml');
 const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 const IMAGES_DIR = path.join(__dirname, 'images');
 const SITEMAP_FILE = path.join(FRONTEND_DIR, 'sitemap.xml');
@@ -320,58 +319,6 @@ function normalizePresets(config) {
         .slice(0, 25)
         .map((p, idx) => sanitizeTabPreset(p, p.id || `disguise-${idx}`));
     return { panicButtons, tabDisguises };
-}
-
-async function loadBannerConfig() {
-    try {
-        const raw = await fs.readFile(BANNER_FILE, 'utf8');
-        const data = yaml.load(raw);
-        if (!data || data.enabled === false) return null;
-        const button = data.button || {};
-        return {
-            id: String(data.id || 'default'),
-            enabled: data.enabled !== false,
-            message: data.message || '',
-            description: data.description || '',
-            background: data.background || '#11161f',
-            textColor: data.textColor || '#e5e7eb',
-            dismissible: data.dismissible !== false,
-            dismissCooldownHours: Number.isFinite(data.dismissCooldownHours) ? data.dismissCooldownHours : 24,
-            button: {
-                enabled: button.enabled !== false && !!button.url,
-                label: button.label || 'Learn more',
-                url: button.url || '',
-                background: button.background || '#1f6feb',
-                textColor: button.textColor || '#ffffff'
-            }
-        };
-    } catch (_) {
-        return null;
-    }
-}
-
-async function saveBannerConfig(input) {
-    const button = input.button || {};
-    const data = {
-        id: input.id || 'default',
-        enabled: input.enabled !== false,
-        message: input.message || '',
-        description: input.description || '',
-        background: input.background || '#11161f',
-        textColor: input.textColor || '#e5e7eb',
-        dismissible: input.dismissible !== false,
-        dismissCooldownHours: Number.isFinite(input.dismissCooldownHours) ? input.dismissCooldownHours : 24,
-        button: {
-            enabled: button.enabled !== false && !!button.url,
-            label: button.label || 'Learn more',
-            url: button.url || '',
-            background: button.background || '#1f6feb',
-            textColor: button.textColor || '#ffffff'
-        }
-    };
-    const yamlStr = yaml.dump(data, { noRefs: true, lineWidth: 120 });
-    await fs.writeFile(BANNER_FILE, yamlStr, 'utf8');
-    return data;
 }
 
 function defaultSettingsFromConfig(config) {
@@ -827,17 +774,6 @@ setTimeout(() => { flushAnalytics().catch(() => {}); }, 2000);
     await ensureFile(REPORTS_FILE, { reports: [] });
     await ensureFile(SESSION_FILE, { sessions: [] });
     await ensureAnalyticsFiles();
-    await ensureYamlFile(BANNER_FILE, {
-        enabled: true,
-        id: 'default',
-        message: 'Welcome to bbgamez!',
-        description: 'Play and save your favorites.',
-        background: '#11161f',
-        textColor: '#e5e7eb',
-        dismissible: true,
-        dismissCooldownHours: 24,
-        button: {
-            enabled: true,
             label: 'Visit Store',
             url: 'https://example.com',
             background: '#1f6feb',
@@ -1376,25 +1312,8 @@ app.get('/api/admin/analytics', requireAdmin, async (req, res) => {
 });
 
 app.get('/api/config', async (req, res) => {
-    const [config, banner] = await Promise.all([loadConfig(), loadBannerConfig()]);
-    res.json({ ...config, banner });
-});
-
-app.get('/api/admin/banner', requireAdmin, async (req, res) => {
-    const banner = await loadBannerConfig();
-    res.json({ banner });
-});
-
-app.put('/api/admin/banner', requireAdmin, async (req, res) => {
-    try {
-        const input = req.body || {};
-        if (input.url && !isHttpUrl(input.url)) return res.status(400).json({ error: 'Invalid button URL' });
-        if (input.button?.url && !isHttpUrl(input.button.url)) return res.status(400).json({ error: 'Invalid button URL' });
-        const saved = await saveBannerConfig(input);
-        res.json({ banner: saved });
-    } catch (err) {
-        res.status(400).json({ error: err.message || 'Failed to save banner' });
-    }
+    const config = await loadConfig();
+    res.json(config);
 });
 
 app.get('/api/games', async (req, res) => {

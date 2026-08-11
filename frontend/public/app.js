@@ -28,7 +28,6 @@
         filtered: [],
         categories: [],
         favorites: new Set(),
-        banner: null,
         user: null,
         friends: { friends: [], incomingRequests: [], outgoingRequests: [], blocked: [] },
         settings: null,
@@ -41,7 +40,6 @@
         adminUsers: [],
         adminLoginCache: {},
         adminDefaults: null,
-        adminNotice: null,
         adminAnalytics: null,
         adminAnalyticsRetention: null,
         adminAnalyticsRange: '24h',
@@ -405,7 +403,6 @@
             statusDot: document.getElementById('statusDot'),
             statusText: document.getElementById('statusText'),
             searchInput: document.getElementById('searchInput'),
-            homeBanner: document.getElementById('homeBanner'),
             categoryTabs: document.getElementById('categoryTabs'),
             allGames: document.getElementById('allGames'),
             favoritesGrid: document.getElementById('favoritesGrid'),
@@ -613,22 +610,6 @@
         els.adminDefaultTabFavicon = document.getElementById('adminDefaultTabFavicon');
         els.adminDefaultTabSource = document.getElementById('adminDefaultTabSource');
         els.adminDefaultTabPreset = document.getElementById('adminDefaultTabPreset');
-        els.adminNoticePanel = document.getElementById('adminNoticePanel');
-        els.adminNoticeForm = document.getElementById('adminNoticeForm');
-        els.adminNoticeFeedback = document.getElementById('adminNoticeFeedback');
-        els.adminNoticeSave = document.getElementById('adminNoticeSave');
-        els.adminNoticeEnabled = document.getElementById('adminNoticeEnabled');
-        els.adminNoticeMessage = document.getElementById('adminNoticeMessage');
-        els.adminNoticeDescription = document.getElementById('adminNoticeDescription');
-        els.adminNoticeBackground = document.getElementById('adminNoticeBackground');
-        els.adminNoticeTextColor = document.getElementById('adminNoticeTextColor');
-        els.adminNoticeDismissible = document.getElementById('adminNoticeDismissible');
-        els.adminNoticeCooldown = document.getElementById('adminNoticeCooldown');
-        els.adminNoticeButtonEnabled = document.getElementById('adminNoticeButtonEnabled');
-        els.adminNoticeButtonLabel = document.getElementById('adminNoticeButtonLabel');
-        els.adminNoticeButtonUrl = document.getElementById('adminNoticeButtonUrl');
-        els.adminNoticeButtonBg = document.getElementById('adminNoticeButtonBg');
-        els.adminNoticeButtonText = document.getElementById('adminNoticeButtonText');
         els.adminActionModal = document.getElementById('adminActionModal');
         els.adminActionOverlay = document.getElementById('adminActionOverlay');
         els.adminActionTitle = document.getElementById('adminActionTitle');
@@ -765,8 +746,6 @@
         els.adminDefaultsForm?.addEventListener('submit', async (e) => { e.preventDefault(); await saveAdminDefaults(); });
         els.adminDefaultsPanicAdd?.addEventListener('click', () => addAdminPreset('panic'));
         els.adminDefaultsDisguiseAdd?.addEventListener('click', () => addAdminPreset('disguise'));
-        els.adminNoticeForm?.addEventListener('submit', async (e) => { e.preventDefault(); await saveAdminNotice(); });
-        els.adminNoticeSave?.addEventListener('click', async (e) => { e.preventDefault(); await saveAdminNotice(); });
         els.adminActionCancel?.addEventListener('click', handleActionCancel);
         els.adminActionConfirm?.addEventListener('click', handleActionConfirm);
         els.adminActionModal?.addEventListener('click', (e) => { if (e.target === els.adminActionModal || e.target === els.adminActionOverlay) handleActionCancel(); });
@@ -1315,14 +1294,11 @@
             state.games = Array.isArray(games) ? games : [];
             state.filtered = state.games.slice();
             state.categories = buildCategories(state.games);
-            state.banner = config?.banner || null;
             buildCategoryTabs();
-            renderHomeBanner(state.banner);
             renderGames();
             if (stats) updateStats(stats); else updateStats({ totalGames: state.games.length, categoryCount: state.categories.length });
             if (me?.user) {
                 state.user = normalizeUser(me.user);
-                if (state.user?.admin) state.adminNotice = state.banner;
                 state.favorites = new Set((me.user.favorites || []).map(String));
                 state.settings = me.user.settings || null;
                 await loadSettingsIfNeeded();
@@ -1460,92 +1436,6 @@
 
     function buildCategories(games = []) {
         return getCategories(games);
-    }
-
-    function renderHomeBanner(banner) {
-        if (!els.homeBanner) return;
-        els.homeBanner.innerHTML = '';
-        if (!banner || banner.enabled === false || !banner.message) {
-            els.homeBanner.style.display = 'none';
-            return;
-        }
-        if (isBannerDismissed(banner)) {
-            els.homeBanner.style.display = 'none';
-            return;
-        }
-
-        const wrap = document.createElement('div');
-        wrap.className = 'home-banner';
-        wrap.style.background = banner.background || '#11161f';
-        wrap.style.color = banner.textColor || '#e5e7eb';
-
-        const text = document.createElement('div');
-        text.className = 'home-banner-text';
-
-        const title = document.createElement('div');
-        title.className = 'home-banner-title';
-        title.textContent = banner.message;
-        text.appendChild(title);
-
-        if (banner.description) {
-            const desc = document.createElement('div');
-            desc.className = 'home-banner-description';
-            desc.textContent = banner.description;
-            text.appendChild(desc);
-        }
-
-        const actions = document.createElement('div');
-        actions.className = 'home-banner-actions';
-
-        if (banner.button?.enabled && banner.button.url) {
-            const btn = document.createElement('a');
-            btn.className = 'banner-btn';
-            btn.href = banner.button.url;
-            btn.target = banner.button.url.startsWith('#') ? '_self' : '_blank';
-            btn.rel = 'noopener';
-            btn.textContent = banner.button.label || 'Learn more';
-            btn.style.background = banner.button.background || '#1f6feb';
-            btn.style.color = banner.button.textColor || '#ffffff';
-            actions.appendChild(btn);
-        }
-
-        if (banner.dismissible !== false) {
-            const close = document.createElement('button');
-            close.type = 'button';
-            close.className = 'banner-dismiss';
-            close.innerHTML = '<i class="fas fa-times"></i>';
-            close.addEventListener('click', () => {
-                markBannerDismissed(banner);
-                renderHomeBanner(null);
-            });
-            actions.appendChild(close);
-        }
-
-        wrap.appendChild(text);
-        wrap.appendChild(actions);
-        els.homeBanner.appendChild(wrap);
-        els.homeBanner.style.display = 'block';
-    }
-
-    function isBannerDismissed(banner) {
-        if (!banner || banner.dismissible === false) return false;
-        const key = `jg_banner_dismiss_${banner.id || 'default'}`;
-        const raw = localStorage.getItem(key);
-        if (!raw) return false;
-        try {
-            const data = JSON.parse(raw);
-            const cooldownMs = Math.max(0, (banner.dismissCooldownHours || 0) * 3600 * 1000);
-            if (!cooldownMs) return false;
-            return Date.now() - (data.ts || 0) < cooldownMs;
-        } catch (_) {
-            return false;
-        }
-    }
-
-    function markBannerDismissed(banner) {
-        if (!banner || banner.dismissible === false) return;
-        const key = `jg_banner_dismiss_${banner.id || 'default'}`;
-        localStorage.setItem(key, JSON.stringify({ ts: Date.now() }));
     }
 
     function buildCategoryTabs() {
@@ -1948,20 +1838,7 @@
         }
     }
 
-    async function loadAdminNotice(force = false) {
-        if (!state.user?.admin) return;
-        if (state.adminNotice && !force) { populateAdminNoticeForm(state.adminNotice); return; }
-        setAdminNoticeFeedback('');
-        try {
-            const { banner } = await api.get('/api/admin/banner');
-            state.adminNotice = banner || null;
-            populateAdminNoticeForm(state.adminNotice);
-        } catch (err) {
-            setAdminNoticeFeedback(err.message || 'Failed to load notice', true);
-        }
-    }
-
-    async function loadAdminAnalytics(force = false) {
+        async function loadAdminAnalytics(force = false) {{
         if (!state.user?.admin) return;
         const limit = 288;
         if (state.adminAnalytics && !force) { renderAdminAnalytics(); return; }
@@ -2533,66 +2410,6 @@
         });
         els.adminGamesList.appendChild(frag);
     }
-
-        function setAdminNoticeFeedback(msg, isError = false) {
-            if (!els.adminNoticeFeedback) return;
-            els.adminNoticeFeedback.textContent = msg || '';
-            els.adminNoticeFeedback.style.color = isError ? '#f85149' : '#58a6ff';
-        }
-
-        function populateAdminNoticeForm(banner) {
-            const data = banner || { enabled: false, button: {} };
-            if (els.adminNoticeEnabled) els.adminNoticeEnabled.checked = data.enabled !== false;
-            if (els.adminNoticeMessage) els.adminNoticeMessage.value = data.message || '';
-            if (els.adminNoticeDescription) els.adminNoticeDescription.value = data.description || '';
-            if (els.adminNoticeBackground) els.adminNoticeBackground.value = data.background || '#11161f';
-            if (els.adminNoticeTextColor) els.adminNoticeTextColor.value = data.textColor || '#e5e7eb';
-            if (els.adminNoticeDismissible) els.adminNoticeDismissible.checked = data.dismissible !== false;
-            if (els.adminNoticeCooldown) els.adminNoticeCooldown.value = Number.isFinite(data.dismissCooldownHours) ? data.dismissCooldownHours : 24;
-            const btn = data.button || {};
-            if (els.adminNoticeButtonEnabled) els.adminNoticeButtonEnabled.checked = btn.enabled !== false && !!btn.url;
-            if (els.adminNoticeButtonLabel) els.adminNoticeButtonLabel.value = btn.label || 'Learn more';
-            if (els.adminNoticeButtonUrl) els.adminNoticeButtonUrl.value = btn.url || '';
-            if (els.adminNoticeButtonBg) els.adminNoticeButtonBg.value = btn.background || '#1f6feb';
-            if (els.adminNoticeButtonText) els.adminNoticeButtonText.value = btn.textColor || '#ffffff';
-        }
-
-        function buildAdminNoticePayload() {
-            const cooldownHours = Math.max(0, Number(els.adminNoticeCooldown?.value || 24));
-            return {
-                enabled: !!els.adminNoticeEnabled?.checked,
-                message: (els.adminNoticeMessage?.value || '').trim(),
-                description: (els.adminNoticeDescription?.value || '').trim(),
-                background: (els.adminNoticeBackground?.value || '').trim() || '#11161f',
-                textColor: (els.adminNoticeTextColor?.value || '').trim() || '#e5e7eb',
-                dismissible: !!els.adminNoticeDismissible?.checked,
-                dismissCooldownHours: Number.isFinite(cooldownHours) ? cooldownHours : 24,
-                button: {
-                    enabled: !!els.adminNoticeButtonEnabled?.checked,
-                    label: (els.adminNoticeButtonLabel?.value || '').trim(),
-                    url: (els.adminNoticeButtonUrl?.value || '').trim(),
-                    background: (els.adminNoticeButtonBg?.value || '').trim(),
-                    textColor: (els.adminNoticeButtonText?.value || '').trim()
-                }
-            };
-        }
-
-        async function saveAdminNotice() {
-            if (!state.user?.admin) return;
-            setAdminNoticeFeedback('Saving...', false);
-            setButtonLoading(els.adminNoticeSave, true);
-            try {
-                const payload = buildAdminNoticePayload();
-                const { banner } = await api.put('/api/admin/banner', payload);
-                state.adminNotice = banner;
-                state.banner = banner;
-                renderHomeBanner(state.banner);
-                setAdminNoticeFeedback('Saved', false);
-            } catch (err) {
-                setAdminNoticeFeedback(err.message || 'Failed to save notice', true);
-            } finally {
-                setButtonLoading(els.adminNoticeSave, false);
-            }
         }
 
     function renderAdminUsers() {
@@ -2789,7 +2606,6 @@
             reports: 'Reports',
             games: 'Games',
             users: 'Users',
-            notice: 'Homepage Notice Bar',
             defaults: 'Default Settings & Presets',
             analytics: 'Analytics'
         };
@@ -2800,7 +2616,6 @@
         if (tab === 'reports') loadAdminReports(true);
         if (tab === 'games') loadAdminGames(true);
         if (tab === 'users') loadAdminUsers(true);
-        if (tab === 'notice') loadAdminNotice(true);
         if (tab === 'defaults') loadAdminDefaults(true);
         if (tab === 'analytics') loadAdminAnalytics(true);
     }
@@ -3806,7 +3621,6 @@
         state.favorites = new Set();
         state.settings = null;
         state.adminLoginCache = {};
-        state.adminNotice = null;
         state.adminAnalytics = null;
         state.friends = { friends: [], incomingRequests: [], outgoingRequests: [], blocked: [] };
         runtime.friendsSnapshot = null;

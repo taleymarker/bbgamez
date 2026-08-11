@@ -123,7 +123,6 @@
             <div class="content-area">
                 <section id="homePage" class="page active">
                     <div class="games-section">
-                        <div id="homeBanner" class="home-banner-slot"></div>
                         <div class="category-bar">
                             <div id="categoryTabs" class="category-tabs"></div>
                             <div class="search-container">
@@ -436,7 +435,6 @@
                                     <button class="friends-tab cat-tab" data-tab="reports">Reports</button>
                                     <button class="friends-tab cat-tab" data-tab="games">Games</button>
                                     <button class="friends-tab cat-tab" data-tab="users">Users</button>
-                                    <button class="friends-tab cat-tab" data-tab="notice">Notice</button>
                                     <button class="friends-tab cat-tab" data-tab="defaults">Defaults</button>
                                     <button class="friends-tab cat-tab" data-tab="analytics">Analytics</button>
                                 </div>
@@ -447,7 +445,6 @@
                                     <button type="button" class="friends-tab cat-tab" id="adminGameNew" data-admin-tabs="games">New Game</button>
                                     <button type="button" class="friends-tab cat-tab" id="adminUsersRefresh" data-admin-tabs="users">Refresh</button>
                                     <button type="button" class="friends-tab cat-tab" id="adminUserNew" data-admin-tabs="users">New User</button>
-                                    <button type="button" class="friends-tab cat-tab" id="adminNoticeSave" data-admin-tabs="notice">Save</button>
                                     <button type="submit" form="adminDefaultsForm" class="friends-tab cat-tab" id="adminDefaultsSaveBtn" data-admin-tabs="defaults">Save</button>
                                     <input type="search" id="adminTabSearch" class="admin-tab-search" style="display:none;" placeholder="Search..." aria-label="Search admin subpage" />
                                 </div>
@@ -489,55 +486,6 @@
                                     <ul id="adminUsersList" class="friends-list" style="display:flex; flex-direction:column; gap:10px;"></ul>
                                 </div>
 
-                                <div class="friends-tab-panel" data-panel="notice" id="adminNoticePanel">
-                                    <div class="section-header" style="margin:0 0 12px 0;">
-                                        <h3 class="section-title">Homepage Notice Bar</h3>
-                                    </div>
-                                    <div id="adminNoticeFeedback" class="form-feedback"></div>
-                                    <form id="adminNoticeForm" class="profile-form admin-notice-grid" autocomplete="off">
-                                        <div class="admin-notice-toggles">
-                                            <label class="toggle-row">Enable
-                                                <label class="ios-toggle">
-                                                    <input type="checkbox" id="adminNoticeEnabled">
-                                                    <span class="ios-toggle-slider"></span>
-                                                </label>
-                                            </label>
-                                            <label class="toggle-row">Dismissible
-                                                <label class="ios-toggle">
-                                                    <input type="checkbox" id="adminNoticeDismissible" checked>
-                                                    <span class="ios-toggle-slider"></span>
-                                                </label>
-                                            </label>
-                                            <label class="toggle-row">Button
-                                                <label class="ios-toggle">
-                                                    <input type="checkbox" id="adminNoticeButtonEnabled">
-                                                    <span class="ios-toggle-slider"></span>
-                                                </label>
-                                            </label>
-                                            <label class="toggle-row">Dismiss Cooldown (hours)
-                                                <input type="number" id="adminNoticeCooldown" min="0" max="168" />
-                                            </label>
-                                        </div>
-                                        <div class="admin-notice-fields">
-                                            <div class="setting-inline">
-                                                <label>Message<input type="text" id="adminNoticeMessage" maxlength="140" placeholder="Banner headline"></label>
-                                                <label>Description<textarea id="adminNoticeDescription" rows="2" maxlength="300" placeholder="Optional subtext"></textarea></label>
-                                            </div>
-                                            <div class="setting-inline">
-                                                <label>Background<input type="text" id="adminNoticeBackground" placeholder="#11161f"></label>
-                                                <label>Text Color<input type="text" id="adminNoticeTextColor" placeholder="#e5e7eb"></label>
-                                            </div>
-                                            <div class="setting-inline">
-                                                <label>Button Label<input type="text" id="adminNoticeButtonLabel" placeholder="Learn more"></label>
-                                                <label>Button URL<input type="url" id="adminNoticeButtonUrl" placeholder="https://..."></label>
-                                            </div>
-                                            <div class="setting-inline">
-                                                <label>Button Background<input type="text" id="adminNoticeButtonBg" placeholder="#1f6feb"></label>
-                                                <label>Button Text Color<input type="text" id="adminNoticeButtonText" placeholder="#ffffff"></label>
-                                            </div>
-                                        </div>
-                                    </form>
-                                </div>
 
                                 <div class="friends-tab-panel" data-panel="defaults" id="adminDefaultsPanel">
                                     <div class="section-header" style="margin:0 0 12px 0;">

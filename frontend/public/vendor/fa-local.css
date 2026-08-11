@@ -1,0 +1,27 @@
+/* Minimal local fallback for essential Font Awesome 6 solid icons */
+@font-face {font-family:'Font Awesome 6 Free'; font-style:normal; font-weight:900; src:local('Font Awesome 6 Free Solid'), local('Font Awesome 6 Free'), url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/fa-solid-900.woff2') format('woff2');}
+@font-face {font-family:'Font Awesome 6 Free'; font-style:normal; font-weight:400; src:local('Font Awesome 6 Free Regular'), url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/fa-regular-400.woff2') format('woff2');}
+.fa, .fas, .fa-solid {font-family:'Font Awesome 6 Free'; font-weight:900;}
+.fa-regular {font-family:'Font Awesome 6 Free'; font-weight:400;}
+/* Core icon content codes (subset) */
+.fa-home:before {content:"\f015";}
+.fa-heart:before {content:"\f004";}
+.fa-user-circle:before {content:"\f2bd";}
+.fa-cog:before, .fa-gear:before {content:"\f013";}
+.fa-gamepad:before {content:"\f11b";}
+.fa-folder:before {content:"\f07b";}
+.fa-users:before {content:"\f0c0";}
+.fa-search:before {content:"\f002";}
+.fa-layer-group:before {content:"\f5fd";}
+.fa-bolt:before {content:"\f0e7";}
+.fa-puzzle-piece:before {content:"\f12e";}
+.fa-map:before {content:"\f279";}
+.fa-chess-knight:before {content:"\f441";}
+.fa-futbol:before {content:"\f1e3";}
+.fa-star:before {content:"\f005";}
+.fa-fire:before {content:"\f06d";}
+.fa-arrows-rotate:before {content:"\f362";}
+.fa-expand:before {content:"\f065";}
+.fa-cloud:before {content:"\f0c2";}
+.fa-times:before {content:"\f00d";}
+.fa-check:before {content:"\f00c";}

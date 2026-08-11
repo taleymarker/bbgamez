@@ -732,18 +732,48 @@ input, select, textarea, button,
 .auth-form .update-check-btn { width: 100%; justify-content: center; text-align: center; }
 .auth-feedback { color:#f85149; font-size:12px; min-height:16px; }
 
-.auth-modal .close-auth {
+.close-auth {
     position: absolute;
     top: 10px;
     right: 10px;
-    background: transparent;
-    border: none;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
     color: #9ba3af;
     cursor: pointer;
     font-size: 16px;
-    padding: 6px;
+    padding: 8px;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    transition: background .2s ease, color .2s ease, transform .2s ease;
 }
-.auth-modal .close-auth:hover { color: #fff; }
+
+.close-auth:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+    transform: translateY(-1px);
+}
+
+.close-auth:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.25);
+}
+
+.auth-modal .close-auth,
+.modal-card .close-auth,
+#adminGameModal .close-auth,
+#adminUserModal .close-auth,
+#adminPresetModal .close-auth,
+#adminLoginModal .close-auth,
+#adminRelationsModal .close-auth,
+#addFriendModal .close-auth {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+}
 
 /* Custom Confirmation Dialog */
 #customConfirmDialog {

@@ -2,6 +2,8 @@ const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const { Readable } = require('stream');
+const dns = require('dns').promises;
+const net = require('net');
 const crypto = require('crypto');
 const express = require('express');
 const helmet = require('helmet');
@@ -43,6 +45,15 @@ const COOKIE_SECURE = process.env.COOKIE_SECURE
     : (process.env.PUBLIC_BASE_URL || '').startsWith('https://'); // default to secure only when an https public URL is set
 const COOKIE_SAME_SITE = (process.env.COOKIE_SAME_SITE || (COOKIE_SECURE ? 'none' : 'lax')).toLowerCase();
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+const CONFIGURED_ORIGINS = (process.env.CORS_ORIGINS || process.env.FRONTEND_ORIGIN || PUBLIC_BASE_URL || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter((origin) => {
+        try { return ['http:', 'https:'].includes(new URL(origin).protocol); } catch (_) { return false; }
+    });
+const ALLOWED_ORIGINS = new Set(CONFIGURED_ORIGINS);
+const MAX_META_BYTES = Math.max(16 * 1024, Math.min(Number(process.env.MAX_META_BYTES) || 200_000, 1_000_000));
+const MAX_PROXY_BYTES = Math.max(1_000_000, Math.min(Number(process.env.MAX_PROXY_BYTES) || 25_000_000, 100_000_000));
 const ONLINE_WINDOW_MS = 20 * 1000; // users must ping within last 20 seconds to count as online
 const ANALYTICS_DIR = path.join(DATA_DIR, 'analytics');
 const ANALYTICS_PLAYERS_FILE = path.join(ANALYTICS_DIR, 'players.json');
@@ -90,7 +101,15 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
-app.use(cors({ origin: true, credentials: true }));
+// Same-origin calls have no Origin header. Cross-origin cookie requests must be
+// explicitly configured, e.g. CORS_ORIGINS=https://app.example.com.
+app.use(cors({
+    credentials: true,
+    origin(origin, callback) {
+        if (!origin || ALLOWED_ORIGINS.has(origin.replace(/\/$/, ''))) return callback(null, true);
+        return callback(new Error('Origin not allowed by CORS'));
+    }
+}));
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 app.use(morgan('dev'));
@@ -110,7 +129,7 @@ async function ensureFile(file, fallback) {
     try {
         await fs.access(file);
     } catch (_) {
-        await fs.writeFile(file, JSON.stringify(fallback, null, 2));
+        await writeAtomically(file, JSON.stringify(fallback, null, 2));
     }
 }
 
@@ -134,7 +153,7 @@ async function readYaml(file, fallback) {
 
 async function writeYaml(file, data) {
     const serialized = yaml.dump(data || {}, { noRefs: true, lineWidth: 120 });
-    await fs.writeFile(file, serialized, 'utf8');
+    await writeAtomically(file, serialized);
 }
 
 async function ensureYamlFile(file, fallback) {
@@ -169,7 +188,19 @@ async function readJson(file, fallback) {
 }
 
 async function writeJson(file, data) {
-    await fs.writeFile(file, JSON.stringify(data, null, 2));
+    await writeAtomically(file, JSON.stringify(data, null, 2));
+}
+
+// Avoid leaving truncated JSON/YAML behind if the process stops during a write.
+async function writeAtomically(file, content) {
+    const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    try {
+        await fs.writeFile(temp, content, { encoding: 'utf8', mode: 0o600 });
+        await fs.rename(temp, file);
+    } catch (err) {
+        await fs.unlink(temp).catch(() => {});
+        throw err;
+    }
 }
 
 async function ensureAnalyticsFiles() {
@@ -252,6 +283,80 @@ function isHttpUrl(url) {
     } catch (_) {
         return false;
     }
+}
+
+function isPrivateAddress(address) {
+    const family = net.isIP(address);
+    if (family === 4) {
+        const [a, b] = address.split('.').map(Number);
+        return a === 0 || a === 10 || a === 127 ||
+            (a === 100 && b >= 64 && b <= 127) ||
+            (a === 169 && b === 254) ||
+            (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && (b === 0 || b === 168)) ||
+            (a === 198 && (b === 18 || b === 19)) || a >= 224;
+    }
+    if (family === 6) {
+        const value = address.toLowerCase();
+        if (value.startsWith('::ffff:')) return isPrivateAddress(value.slice(7));
+        return value === '::' || value === '::1' || value.startsWith('fc') ||
+            value.startsWith('fd') || value.startsWith('fe8') || value.startsWith('fe9') ||
+            value.startsWith('fea') || value.startsWith('feb');
+    }
+    return true;
+}
+
+async function assertSafeRemoteUrl(value) {
+    const target = new URL(value);
+    if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
+        throw new Error('Only public http/https URLs are allowed');
+    }
+    const hostname = target.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (hostname === 'localhost' || hostname.endsWith('.localhost') ||
+        (net.isIP(hostname) && isPrivateAddress(hostname))) {
+        throw new Error('Private network URLs are not allowed');
+    }
+    const addresses = net.isIP(hostname)
+        ? [{ address: hostname }]
+        : await dns.lookup(hostname, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
+        throw new Error('Private network URLs are not allowed');
+    }
+    return target;
+}
+
+async function fetchPublicUrl(value, options = {}) {
+    let target = await assertSafeRemoteUrl(value);
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+        const response = await fetch(target, { ...options, redirect: 'manual' });
+        if (![301, 302, 303, 307, 308].includes(response.status)) return { response, url: target.toString() };
+        const location = response.headers.get('location');
+        if (!location || redirects === 3) throw new Error('Too many redirects');
+        response.body?.cancel().catch(() => {});
+        target = await assertSafeRemoteUrl(new URL(location, target).toString());
+    }
+    throw new Error('Too many redirects');
+}
+
+async function readResponseText(response, maxBytes) {
+    const length = Number(response.headers.get('content-length'));
+    if (Number.isFinite(length) && length > maxBytes) throw new Error('Response is too large');
+    if (!response.body) return '';
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > maxBytes) throw new Error('Response is too large');
+            chunks.push(Buffer.from(value));
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total).toString('utf8');
 }
 
 function isIconUrl(url) {
@@ -458,11 +563,13 @@ function cookieOptions(maxAge, req) {
     const protoHeader = req?.get ? (req.get('x-forwarded-proto') || '').split(',')[0].trim() : '';
     const isHttps = (protoHeader || req?.protocol || '').toLowerCase() === 'https';
     const secureFlag = COOKIE_SECURE || isHttps;
-    const sameSiteFlag = (process.env.COOKIE_SAME_SITE || (secureFlag ? 'none' : 'lax')).toLowerCase();
+    const requestedSameSite = (process.env.COOKIE_SAME_SITE || (secureFlag ? 'none' : 'lax')).toLowerCase();
+    const sameSiteFlag = ['lax', 'strict', 'none'].includes(requestedSameSite) ? requestedSameSite : 'lax';
+    const effectiveSameSite = sameSiteFlag === 'none' && !secureFlag ? 'lax' : sameSiteFlag;
     const opts = {
         httpOnly: true,
         secure: secureFlag,
-        sameSite: sameSiteFlag,
+        sameSite: effectiveSameSite,
         maxAge
     };
     if (COOKIE_DOMAIN) opts.domain = COOKIE_DOMAIN;
@@ -592,6 +699,10 @@ async function requireAuth(req, res, next) {
     if (!refreshed?.user || !refreshed?.session) return res.status(401).json({ error: 'Session expired' });
 
     const { user, session } = refreshed;
+    if (user.banned?.active) {
+        clearAuthCookies(res);
+        return res.status(403).json({ error: 'Account is banned' });
+    }
     req.user = { id: user.id, username: user.username, admin: !!user.admin };
     req.me = user;
     req.session = session;
@@ -774,12 +885,6 @@ setTimeout(() => { flushAnalytics().catch(() => {}); }, 2000);
     await ensureFile(REPORTS_FILE, { reports: [] });
     await ensureFile(SESSION_FILE, { sessions: [] });
     await ensureAnalyticsFiles();
-            label: 'Visit Store',
-            url: 'https://example.com',
-            background: '#1f6feb',
-            textColor: '#ffffff'
-        }
-    });
 })();
 
 // --- Core endpoints
@@ -1382,7 +1487,7 @@ app.post('/api/auth/register', async (req, res) => {
             favorites: [],
             profile: {
                 username,
-                accentColor: (await loadConfig()).defaults?.accentColor || '#58a6ff',
+                accentColor: config.defaults?.accentColor || '#58a6ff',
                 avatar: null,
                 lastPlayed: [],
                 playtime: {}
@@ -1427,9 +1532,16 @@ app.post('/api/auth/login', async (req, res) => {
 
     const ok = await bcrypt.compare(password, user.passwordHash || '');
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    if (user.banned?.active) {
+        return res.status(403).json({
+            error: 'Account is banned',
+            banned: true,
+            reason: user.banned.reason || 'Your account is banned'
+        });
+    }
 
     recordLoginIp(user, getClientIp(req));
-    setPresence(user, { online: !user.banned?.active });
+    setPresence(user, { online: true });
     user.updatedAt = new Date().toISOString();
     await saveUsers(users);
     const { session, sessionToken } = await createSession(user, {
@@ -1450,16 +1562,19 @@ app.post('/api/auth/logout', async (req, res) => {
     try {
         const sessions = await loadSessions();
         const parsed = parseSessionCookie(req);
+        let userId = null;
         if (parsed) {
             const session = sessions.find((s) => s.id === parsed.sessionId);
-            if (session) session.revokedAt = new Date().toISOString();
+            if (session && session.sessionHash === hashToken(parsed.token)) {
+                userId = session.userId;
+                session.revokedAt = new Date().toISOString();
+            }
             await persistSessions(sessions);
         }
 
-        const refreshed = await refreshSessionFromCookie(req, res);
-        if (refreshed?.user) {
+        if (userId) {
             const users = await loadUsers();
-            const me = await getUserById(users, refreshed.user.id);
+            const me = await getUserById(users, userId);
             if (me) {
                 setPresence(me, { online: false, gameId: null });
                 me.updatedAt = new Date().toISOString();
@@ -1673,10 +1788,13 @@ app.post('/api/utils/page-meta', requireAuth, async (req, res) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3500);
     try {
-        const resp = await fetch(url, { redirect: 'follow', signal: controller.signal });
-        const base = resp.url || url;
-        const text = await resp.text();
-        const html = text.slice(0, 200_000);
+        const { response: resp, url: base } = await fetchPublicUrl(url, { signal: controller.signal });
+        if (!resp.ok) return res.status(400).json({ error: 'Unable to fetch page metadata' });
+        const contentType = resp.headers.get('content-type') || '';
+        if (!/^(text\/html|application\/xhtml\+xml)(?:;|$)/i.test(contentType)) {
+            return res.status(400).json({ error: 'URL did not return an HTML page' });
+        }
+        const html = await readResponseText(resp, MAX_META_BYTES);
         const meta = extractMetaFromHtml(html, base);
         res.json({ title: meta.title, favicon: meta.favicon });
     } catch (err) {
@@ -1969,6 +2087,7 @@ app.get('/api/presence/friends', requireAuth, async (req, res) => {
 
 // --- Proxy
 const BLOCKED_HEADERS = ['content-security-policy', 'content-security-policy-report-only', 'x-frame-options', 'strict-transport-security'];
+const PROXY_RESPONSE_HEADERS = new Set(['accept-ranges', 'content-disposition', 'content-length', 'content-type', 'etag', 'last-modified']);
 
 app.get('/proxy', async (req, res) => {
     const target = req.query.url;
@@ -1984,14 +2103,17 @@ app.get('/proxy', async (req, res) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-        const upstream = await fetch(parsed.toString(), {
+        const { response: upstream } = await fetchPublicUrl(parsed.toString(), {
             method: 'GET',
-            redirect: 'follow',
             signal: controller.signal
         });
+        const contentLength = Number(upstream.headers.get('content-length'));
+        if (Number.isFinite(contentLength) && contentLength > MAX_PROXY_BYTES) {
+            return res.status(413).json({ error: 'Proxy response is too large' });
+        }
         res.status(upstream.status);
         upstream.headers.forEach((value, key) => {
-            if (BLOCKED_HEADERS.includes(key.toLowerCase())) return;
+            if (BLOCKED_HEADERS.includes(key.toLowerCase()) || !PROXY_RESPONSE_HEADERS.has(key.toLowerCase())) return;
             res.setHeader(key, value);
         });
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1999,7 +2121,17 @@ app.get('/proxy', async (req, res) => {
         res.setHeader('Cache-Control', 'no-store');
 
         if (!upstream.body) return res.end();
-        Readable.fromWeb(upstream.body).pipe(res);
+        let received = 0;
+        const source = Readable.fromWeb(upstream.body);
+        source.on('data', (chunk) => {
+            received += chunk.length;
+            if (received > MAX_PROXY_BYTES) source.destroy(new Error('Proxy response is too large'));
+        });
+        source.on('error', (err) => {
+            if (!res.headersSent) return res.status(502).json({ error: err.message });
+            res.destroy(err);
+        });
+        source.pipe(res);
     } catch (err) {
         const status = err.name === 'AbortError' ? 504 : 500;
         res.status(status).json({ error: 'Proxy fetch failed', detail: err.message });

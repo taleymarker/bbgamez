@@ -244,6 +244,19 @@ async function writeYaml(file, data) {
     await writeAtomically(file, serialized);
 }
 
+function parseYamlObject(raw, context = 'YAML') {
+    let parsed;
+    try {
+        parsed = yaml.load(raw);
+    } catch (err) {
+        throw new Error(`${context} parse error: ${err.message}`);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`${context} must be a YAML object`);
+    }
+    return parsed;
+}
+
 async function ensureYamlFile(file, fallback) {
     try {
         await fs.access(file);
@@ -1487,6 +1500,43 @@ app.put('/api/admin/defaults', requireAdmin, async (req, res) => {
         res.json({ defaults: defaultSettingsFromConfig(nextConfig), presets: normalizePresets(nextConfig) });
     } catch (err) {
         res.status(400).json({ error: err.message || 'Failed to update defaults' });
+    }
+});
+
+app.get('/api/admin/config-file', requireAdmin, async (req, res) => {
+    try {
+        const raw = await fs.readFile(CONFIG_GENERAL_FILE, 'utf8');
+        const stats = await fs.stat(CONFIG_GENERAL_FILE);
+        res.json({
+            file: 'config.yml',
+            content: raw,
+            bytes: Buffer.byteLength(raw, 'utf8'),
+            updatedAt: stats?.mtime ? new Date(stats.mtime).toISOString() : null
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to read config file' });
+    }
+});
+
+app.put('/api/admin/config-file', requireAdmin, async (req, res) => {
+    try {
+        const { content } = req.body || {};
+        if (typeof content !== 'string') return res.status(400).json({ error: 'content must be a string' });
+        if (Buffer.byteLength(content, 'utf8') > 250_000) return res.status(413).json({ error: 'config.yml exceeds max size (250KB)' });
+
+        const parsed = parseYamlObject(content, 'config.yml');
+        await writeAtomically(CONFIG_GENERAL_FILE, content);
+        applyRuntimeCorsConfig(parsed.cors || {});
+
+        const stats = await fs.stat(CONFIG_GENERAL_FILE);
+        res.json({
+            success: true,
+            file: 'config.yml',
+            bytes: Buffer.byteLength(content, 'utf8'),
+            updatedAt: stats?.mtime ? new Date(stats.mtime).toISOString() : null
+        });
+    } catch (err) {
+        res.status(400).json({ error: err.message || 'Failed to save config file' });
     }
 });
 

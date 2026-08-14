@@ -26,15 +26,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div id="appPageLoader" class="app-page-loader" aria-live="polite" aria-busy="true">
-        <div class="apl-full">
-            <div class="apl-logo-wrap">
-                <img src="logo.png" alt="bbgamez" class="apl-logo" draggable="false" />
-            </div>
-            <div class="apl-spinner" aria-hidden="true"></div>
-        </div>
-    </div>
-
     <div class="app-container">
         <aside class="sidebar">
             <div class="sidebar-header">
@@ -443,6 +434,7 @@
                                     <button class="friends-tab cat-tab" data-tab="games">Games</button>
                                     <button class="friends-tab cat-tab" data-tab="users">Users</button>
                                     <button class="friends-tab cat-tab" data-tab="defaults">Defaults</button>
+                                    <button class="friends-tab cat-tab" data-tab="config">Config</button>
                                     <button class="friends-tab cat-tab" data-tab="analytics">Analytics</button>
                                 </div>
                                 <div class="admin-tab-actions" id="adminTabActions">
@@ -453,6 +445,8 @@
                                     <button type="button" class="friends-tab cat-tab" id="adminUsersRefresh" data-admin-tabs="users">Refresh</button>
                                     <button type="button" class="friends-tab cat-tab" id="adminUserNew" data-admin-tabs="users">New User</button>
                                     <button type="submit" form="adminDefaultsForm" class="friends-tab cat-tab" id="adminDefaultsSaveBtn" data-admin-tabs="defaults">Save</button>
+                                    <button type="button" class="friends-tab cat-tab" id="adminConfigRefresh" data-admin-tabs="config">Reload</button>
+                                    <button type="button" class="friends-tab cat-tab" id="adminConfigSaveBtn" data-admin-tabs="config">Save</button>
                                     <input type="search" id="adminTabSearch" class="admin-tab-search" style="display:none;" placeholder="Search..." aria-label="Search admin subpage" />
                                 </div>
                             </div>
@@ -553,6 +547,18 @@
                                             </div>
                                         </div>
                                     </form>
+                                </div>
+
+                                <div class="friends-tab-panel" data-panel="config" id="adminConfigPanel">
+                                    <div class="section-header" style="margin:0 0 12px 0;">
+                                        <h3 class="section-title">Backend Config File</h3>
+                                    </div>
+                                    <div id="adminConfigFeedback" class="form-feedback"></div>
+                                    <div id="adminConfigMeta" class="admin-config-meta" aria-live="polite">
+                                        <span class="admin-config-meta-path">backend/data/config.yml</span>
+                                        <span class="admin-config-meta-info">Size: 0 bytes • Updated: unknown</span>
+                                    </div>
+                                    <textarea id="adminConfigEditor" class="admin-config-editor" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="version: 3.0.0"></textarea>
                                 </div>
 
                                 <div class="friends-tab-panel" data-panel="analytics" id="adminAnalyticsPanel">

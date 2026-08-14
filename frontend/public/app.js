@@ -44,6 +44,7 @@
         adminAnalyticsRetention: null,
         adminAnalyticsRange: '24h',
         adminAnalyticsSearch: '',
+        adminConfig: null,
         adminSearchQueries: { requests: '', reports: '', games: '', users: '' },
         adminTab: 'requests'
     };
@@ -327,6 +328,79 @@
         }
     }
 
+    function setAdminConfigFeedback(message, isError = false) {
+        if (!els.adminConfigFeedback) return;
+        els.adminConfigFeedback.textContent = message || '';
+        els.adminConfigFeedback.style.color = isError ? '#f85149' : '#58a6ff';
+    }
+
+    function renderAdminConfigMeta(meta = {}) {
+        if (!els.adminConfigMeta) return;
+        const updatedText = meta.updatedAt ? new Date(meta.updatedAt).toLocaleString() : 'unknown';
+        const bytes = Number(meta.bytes) || 0;
+        els.adminConfigMeta.innerHTML = `
+            <span class="admin-config-meta-path">backend/data/config.yml</span>
+            <span class="admin-config-meta-info">Size: ${bytes} bytes • Updated: ${updatedText}</span>
+        `;
+    }
+
+    async function loadAdminConfigFile(force = false) {
+        if (!state.user?.admin) return;
+        if (state.adminConfig && !force) {
+            if (els.adminConfigEditor) els.adminConfigEditor.value = state.adminConfig.content || '';
+            renderAdminConfigMeta(state.adminConfig);
+            return;
+        }
+        setAdminConfigFeedback('Loading config file...');
+        if (els.adminConfigRefresh) els.adminConfigRefresh.disabled = true;
+        try {
+            const data = await api.get('/api/admin/config-file');
+            state.adminConfig = {
+                file: data.file || 'config.yml',
+                content: data.content || '',
+                bytes: data.bytes || 0,
+                updatedAt: data.updatedAt || null
+            };
+            if (els.adminConfigEditor) els.adminConfigEditor.value = state.adminConfig.content;
+            renderAdminConfigMeta(state.adminConfig);
+            setAdminConfigFeedback('Loaded config.yml');
+        } catch (err) {
+            setAdminConfigFeedback(err.message || 'Failed to load config file', true);
+        } finally {
+            if (els.adminConfigRefresh) els.adminConfigRefresh.disabled = false;
+        }
+    }
+
+    async function saveAdminConfigFile() {
+        if (!state.user?.admin || !els.adminConfigEditor) return;
+        const content = els.adminConfigEditor.value || '';
+        if (!content.trim()) {
+            setAdminConfigFeedback('Config content cannot be empty', true);
+            return;
+        }
+        if (els.adminConfigSaveBtn) els.adminConfigSaveBtn.disabled = true;
+        if (els.adminConfigRefresh) els.adminConfigRefresh.disabled = true;
+        setAdminConfigFeedback('Saving config.yml...');
+        try {
+            const result = await api.put('/api/admin/config-file', { content });
+            state.adminConfig = {
+                ...(state.adminConfig || {}),
+                content,
+                file: result.file || 'config.yml',
+                bytes: result.bytes || new Blob([content]).size,
+                updatedAt: result.updatedAt || null
+            };
+            renderAdminConfigMeta(state.adminConfig);
+            setAdminConfigFeedback('Saved config.yml');
+            showToast('Backend config saved');
+        } catch (err) {
+            setAdminConfigFeedback(err.message || 'Failed to save config file', true);
+        } finally {
+            if (els.adminConfigSaveBtn) els.adminConfigSaveBtn.disabled = false;
+            if (els.adminConfigRefresh) els.adminConfigRefresh.disabled = false;
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', init);
 
     function init() {
@@ -384,7 +458,6 @@
 
     function cacheElements() {
         Object.assign(els, {
-            loader: document.getElementById('appPageLoader'),
             navItems: Array.from(document.querySelectorAll('.nav-item')),
             pages: {
                 home: document.getElementById('homePage'),
@@ -593,6 +666,12 @@
         els.adminDefaultsDisguiseList = document.getElementById('adminDefaultsDisguiseList');
         els.adminDefaultsPanicAdd = document.getElementById('adminDefaultsPanicAdd');
         els.adminDefaultsDisguiseAdd = document.getElementById('adminDefaultsDisguiseAdd');
+        els.adminConfigPanel = document.getElementById('adminConfigPanel');
+        els.adminConfigEditor = document.getElementById('adminConfigEditor');
+        els.adminConfigFeedback = document.getElementById('adminConfigFeedback');
+        els.adminConfigMeta = document.getElementById('adminConfigMeta');
+        els.adminConfigRefresh = document.getElementById('adminConfigRefresh');
+        els.adminConfigSaveBtn = document.getElementById('adminConfigSaveBtn');
         els.adminRelationsModal = document.getElementById('adminRelationsModal');
         els.adminRelationsOverlay = document.getElementById('adminRelationsOverlay');
         els.adminRelationsClose = document.getElementById('adminRelationsClose');
@@ -718,6 +797,14 @@
         els.adminReportsRefresh?.addEventListener('click', () => loadAdminReports(true));
         els.adminGamesRefresh?.addEventListener('click', () => loadAdminGames(true));
         els.adminUsersRefresh?.addEventListener('click', () => loadAdminUsers(true));
+        els.adminConfigRefresh?.addEventListener('click', () => loadAdminConfigFile(true));
+        els.adminConfigSaveBtn?.addEventListener('click', async () => { await saveAdminConfigFile(); });
+        els.adminConfigEditor?.addEventListener('keydown', async (e) => {
+            const wantsSave = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
+            if (!wantsSave) return;
+            e.preventDefault();
+            await saveAdminConfigFile();
+        });
         els.adminTabSearch?.addEventListener('input', (e) => {
             const value = (e.target.value || '').trim().toLowerCase();
             const tab = state.adminTab || 'requests';
@@ -1283,7 +1370,6 @@
     }
 
     async function loadInitial() {
-        showLoader(true);
         try {
             const [config, games, stats, me] = await Promise.all([
                 api.get('/api/config').catch(() => null),
@@ -1320,7 +1406,6 @@
         } finally {
             startOnlineHeartbeat();
             startHealthPolling();
-            showLoader(false);
         }
     }
 
@@ -2606,6 +2691,7 @@
             games: 'Games',
             users: 'Users',
             defaults: 'Default Settings & Presets',
+            config: 'Backend Config File',
             analytics: 'Analytics'
         };
         if (els.adminSubpageTitle) {
@@ -2616,6 +2702,7 @@
         if (tab === 'games') loadAdminGames(true);
         if (tab === 'users') loadAdminUsers(true);
         if (tab === 'defaults') loadAdminDefaults(true);
+        if (tab === 'config') loadAdminConfigFile(true);
         if (tab === 'analytics') loadAdminAnalytics(true);
     }
 
@@ -3807,20 +3894,6 @@
         els.proxyToggleGame?.classList.toggle('off', !active);
         els.proxyToggleGame?.setAttribute('aria-pressed', active ? 'true' : 'false');
         if (state.currentGame) renderGameFriends(state.currentGame.id);
-    }
-
-    function showLoader(show) {
-        if (!els.loader) return;
-        if (show) {
-            // Only allow showing once during initial load to avoid re-triggering the intro animation
-            if (els.loader.dataset.locked === 'true') return;
-            els.loader.style.display = 'flex';
-        } else {
-            els.loader.dataset.locked = 'true';
-            els.loader.classList.add('fade-out');
-            // Keep it in the DOM but hidden to prevent flicker on future API polls
-            setTimeout(() => { els.loader.style.display = 'none'; }, 600);
-        }
     }
 
     function toggleSaving(isSaving) {

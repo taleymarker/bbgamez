@@ -1,0 +1,13 @@
+{
+  "name": "bbgamez",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Heroku launcher for bbgamez monorepo",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "postinstall": "npm install --prefix backend",
+    "start": "npm --prefix backend start"
+  }
+}

@@ -45,13 +45,6 @@ const COOKIE_SECURE = process.env.COOKIE_SECURE
     : (process.env.PUBLIC_BASE_URL || '').startsWith('https://'); // default to secure only when an https public URL is set
 const COOKIE_SAME_SITE = (process.env.COOKIE_SAME_SITE || (COOKIE_SECURE ? 'none' : 'lax')).toLowerCase();
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
-const CONFIGURED_ORIGINS = (process.env.CORS_ORIGINS || process.env.FRONTEND_ORIGIN || PUBLIC_BASE_URL || '')
-    .split(',')
-    .map((origin) => origin.trim().replace(/\/$/, ''))
-    .filter((origin) => {
-        try { return ['http:', 'https:'].includes(new URL(origin).protocol); } catch (_) { return false; }
-    });
-const ALLOWED_ORIGINS = new Set(CONFIGURED_ORIGINS);
 const MAX_META_BYTES = Math.max(16 * 1024, Math.min(Number(process.env.MAX_META_BYTES) || 200_000, 1_000_000));
 const MAX_PROXY_BYTES = Math.max(1_000_000, Math.min(Number(process.env.MAX_PROXY_BYTES) || 25_000_000, 100_000_000));
 const ONLINE_WINDOW_MS = 20 * 1000; // users must ping within last 20 seconds to count as online
@@ -91,6 +84,89 @@ const app = express();
 const TRUST_PROXY_SETTING = process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal';
 app.set('trust proxy', TRUST_PROXY_SETTING);
 
+const DEFAULT_CORS_METHODS = ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'];
+
+function normalizeOrigin(origin) {
+    if (!origin) return null;
+    try {
+        const parsed = new URL(origin);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+        return parsed.origin;
+    } catch (_) {
+        return null;
+    }
+}
+
+function parseStringList(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    if (typeof value === 'string') {
+        return value.split(',').map((item) => item.trim()).filter(Boolean);
+    }
+    return [];
+}
+
+function parseOrigins(value) {
+    return parseStringList(value)
+        .map((origin) => normalizeOrigin(origin))
+        .filter(Boolean);
+}
+
+function parseBoolean(value, fallback) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true') return true;
+        if (normalized === 'false') return false;
+    }
+    return fallback;
+}
+
+function parsePositiveInteger(value, fallback) {
+    const n = Number(value);
+    return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+function normalizeCorsConfig(input = {}, fallbackAllowedOrigins = []) {
+    const configuredOrigins = parseOrigins(input.allowedOrigins);
+    const allowedOrigins = configuredOrigins.length ? configuredOrigins : fallbackAllowedOrigins;
+    const methods = parseStringList(input.methods);
+    const allowedHeaders = parseStringList(input.allowedHeaders);
+    const exposedHeaders = parseStringList(input.exposedHeaders);
+    const maxAge = parsePositiveInteger(input.maxAge, undefined);
+
+    const normalized = {
+        allowedOrigins,
+        allowNoOrigin: parseBoolean(input.allowNoOrigin, true),
+        credentials: parseBoolean(input.credentials, true),
+        methods: methods.length ? methods : DEFAULT_CORS_METHODS,
+        allowedHeaders,
+        exposedHeaders,
+        optionsSuccessStatus: parsePositiveInteger(input.optionsSuccessStatus, 204)
+    };
+
+    if (maxAge !== undefined) normalized.maxAge = maxAge;
+    return normalized;
+}
+
+function loadGeneralConfigSync() {
+    try {
+        const raw = fsSync.readFileSync(CONFIG_GENERAL_FILE, 'utf8');
+        const parsed = yaml.load(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+const ENV_CONFIGURED_ORIGINS = parseOrigins(process.env.CORS_ORIGINS || process.env.FRONTEND_ORIGIN || PUBLIC_BASE_URL || '');
+let runtimeCorsConfig = normalizeCorsConfig(loadGeneralConfigSync().cors || {}, ENV_CONFIGURED_ORIGINS);
+
+function applyRuntimeCorsConfig(config) {
+    runtimeCorsConfig = normalizeCorsConfig(config || {}, ENV_CONFIGURED_ORIGINS);
+}
+
 // In-memory heartbeat tracking for guests (non-authenticated visitors)
 const guestHeartbeats = new Map();
 
@@ -101,14 +177,26 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
-// Same-origin calls have no Origin header. Cross-origin cookie requests must be
-// explicitly configured, e.g. CORS_ORIGINS=https://app.example.com.
-app.use(cors({
-    credentials: true,
-    origin(origin, callback) {
-        if (!origin || ALLOWED_ORIGINS.has(origin.replace(/\/$/, ''))) return callback(null, true);
-        return callback(new Error('Origin not allowed by CORS'));
-    }
+// Same-origin calls have no Origin header. Cross-origin calls are controlled by
+// data/config.yml -> cors.allowedOrigins (env vars remain as fallback).
+app.use(cors((req, callback) => {
+    const currentCors = runtimeCorsConfig;
+    const requestOrigin = req.header('Origin');
+    const normalizedOrigin = normalizeOrigin(requestOrigin);
+    const isAllowed = (!requestOrigin && currentCors.allowNoOrigin)
+        || (normalizedOrigin && currentCors.allowedOrigins.includes(normalizedOrigin));
+
+    if (!isAllowed) return callback(new Error('Origin not allowed by CORS'));
+
+    return callback(null, {
+        origin: true,
+        credentials: currentCors.credentials,
+        methods: currentCors.methods,
+        allowedHeaders: currentCors.allowedHeaders.length ? currentCors.allowedHeaders : undefined,
+        exposedHeaders: currentCors.exposedHeaders.length ? currentCors.exposedHeaders : undefined,
+        maxAge: currentCors.maxAge,
+        optionsSuccessStatus: currentCors.optionsSuccessStatus
+    });
 }));
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
@@ -235,22 +323,27 @@ async function loadConfig() {
     const general = await readYaml(CONFIG_GENERAL_FILE, legacy || {});
     const features = await readYaml(FEATURES_FILE, legacy?.features || {});
     const defaults = await readYaml(DEFAULTS_FILE, legacy?.defaults || {});
+    const cors = normalizeCorsConfig(general?.cors || legacy?.cors || {}, ENV_CONFIGURED_ORIGINS);
     return {
         version: general?.version || APP_VERSION,
         maintenanceMode: general?.maintenanceMode || { enabled: false },
         uiControls: general?.uiControls || {},
+        cors,
         features: features || {},
         defaults: (defaults && Object.keys(defaults).length ? defaults : { presets: BUILT_IN_PRESETS })
     };
 }
 
 async function saveConfig(config) {
+    const cors = normalizeCorsConfig(config?.cors || {}, ENV_CONFIGURED_ORIGINS);
     const general = {
         version: config?.version || APP_VERSION,
         maintenanceMode: config?.maintenanceMode || { enabled: false },
-        uiControls: config?.uiControls || {}
+        uiControls: config?.uiControls || {},
+        cors
     };
     await writeYaml(CONFIG_GENERAL_FILE, general);
+    applyRuntimeCorsConfig(cors);
     await writeYaml(FEATURES_FILE, config?.features || {});
     await writeYaml(DEFAULTS_FILE, config?.defaults || { presets: BUILT_IN_PRESETS });
 }
@@ -264,7 +357,8 @@ async function migrateLegacyConfig() {
         await writeYaml(CONFIG_GENERAL_FILE, {
             version: legacy.version || APP_VERSION,
             maintenanceMode: legacy.maintenanceMode || { enabled: false },
-            uiControls: legacy.uiControls || {}
+            uiControls: legacy.uiControls || {},
+            cors: normalizeCorsConfig(legacy.cors || {}, ENV_CONFIGURED_ORIGINS)
         });
     }
     if (!(await fileExists(FEATURES_FILE)) && legacy.features) {
@@ -878,9 +972,16 @@ setTimeout(() => { flushAnalytics().catch(() => {}); }, 2000);
     await ensureFile(USERS_FILE, { users: [] });
     await ensureFile(GAMES_FILE, []);
     await migrateLegacyConfig();
-    await ensureYamlFile(CONFIG_GENERAL_FILE, { version: APP_VERSION, maintenanceMode: { enabled: false }, uiControls: {} });
+    await ensureYamlFile(CONFIG_GENERAL_FILE, {
+        version: APP_VERSION,
+        maintenanceMode: { enabled: false },
+        uiControls: {},
+        cors: normalizeCorsConfig({}, ENV_CONFIGURED_ORIGINS)
+    });
     await ensureYamlFile(FEATURES_FILE, {});
     await ensureYamlFile(DEFAULTS_FILE, { presets: BUILT_IN_PRESETS });
+    const config = await loadConfig();
+    applyRuntimeCorsConfig(config.cors || {});
     await ensureFile(REQUESTS_FILE, { requests: [] });
     await ensureFile(REPORTS_FILE, { reports: [] });
     await ensureFile(SESSION_FILE, { sessions: [] });

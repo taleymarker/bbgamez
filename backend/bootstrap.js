@@ -1,4 +1,5 @@
 const fs = require('fs/promises');
+const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const yaml = require('js-yaml');
@@ -49,6 +50,36 @@ async function ensureConfigAllowedOrigin(configPath, origin) {
   await fs.mkdir(require('path').dirname(configPath), { recursive: true });
   await fs.writeFile(configPath, yaml.dump(config, { noRefs: true, lineWidth: 120 }), 'utf8');
   return config.cors;
+}
+
+function resolveDataFilePath(baseDir, relativePath) {
+  const raw = String(relativePath || '').trim();
+  const target = raw || 'config.yml';
+  const candidate = target.startsWith('/') ? target : path.join(baseDir, target);
+  const resolved = path.resolve(candidate);
+  const base = path.resolve(baseDir);
+  const relative = path.relative(base, resolved);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Invalid data file path');
+  }
+  return resolved;
+}
+
+async function listDataFiles(baseDir) {
+  const files = [];
+  async function walk(current) {
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile()) {
+        files.push(path.relative(baseDir, fullPath).split(path.sep).join('/'));
+      }
+    }
+  }
+  await walk(baseDir);
+  return files.sort();
 }
 
 async function ensureDefaultAdminUser({ usersPath, configPath, username = 'admin', password = 'password' } = {}) {
@@ -106,5 +137,7 @@ module.exports = {
   normalizeOrigin,
   getRequestOrigin,
   ensureConfigAllowedOrigin,
+  listDataFiles,
+  resolveDataFilePath,
   ensureDefaultAdminUser
 };

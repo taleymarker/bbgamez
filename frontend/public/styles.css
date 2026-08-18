@@ -1350,6 +1350,18 @@ input, select, textarea, button,
     color: var(--text-secondary);
 }
 
+.admin-config-file-select {
+    flex: 1 1 auto;
+    min-width: 180px;
+    max-width: 420px;
+    background: #1e1e1e;
+    color: var(--text-primary);
+    border: 1px solid #3c3c3c;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
 .admin-config-meta-path,
 .admin-config-meta-info {
     font-style: normal;
@@ -1362,6 +1374,7 @@ input, select, textarea, button,
 
 .admin-config-meta-info {
     text-align: right;
+    white-space: nowrap;
 }
 
 .admin-config-editor {

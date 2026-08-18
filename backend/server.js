@@ -14,7 +14,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const morgan = require('morgan');
 const yaml = require('js-yaml');
-const { ensureDefaultAdminUser, getRequestOrigin, ensureConfigAllowedOrigin } = require('./bootstrap');
+const { ensureDefaultAdminUser, getRequestOrigin, ensureConfigAllowedOrigin, listDataFiles, resolveDataFilePath } = require('./bootstrap');
 
 const APP_VERSION = '3.0.0';
 const PORT = process.env.PORT || 3000;
@@ -1536,12 +1536,24 @@ app.put('/api/admin/defaults', requireAdmin, async (req, res) => {
     }
 });
 
+app.get('/api/admin/config-files', requireAdmin, async (req, res) => {
+    try {
+        const files = await listDataFiles(DATA_DIR);
+        res.json({ files });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to list config files' });
+    }
+});
+
 app.get('/api/admin/config-file', requireAdmin, async (req, res) => {
     try {
-        const raw = await fs.readFile(CONFIG_GENERAL_FILE, 'utf8');
-        const stats = await fs.stat(CONFIG_GENERAL_FILE);
+        const requestedFile = req.query.file ? String(req.query.file) : 'config.yml';
+        const targetFile = resolveDataFilePath(DATA_DIR, requestedFile);
+        const relativePath = path.relative(DATA_DIR, targetFile).split(path.sep).join('/');
+        const raw = await fs.readFile(targetFile, 'utf8');
+        const stats = await fs.stat(targetFile);
         res.json({
-            file: 'config.yml',
+            file: relativePath,
             content: raw,
             bytes: Buffer.byteLength(raw, 'utf8'),
             updatedAt: stats?.mtime ? new Date(stats.mtime).toISOString() : null
@@ -1553,18 +1565,26 @@ app.get('/api/admin/config-file', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/config-file', requireAdmin, async (req, res) => {
     try {
-        const { content } = req.body || {};
+        const { content, file } = req.body || {};
+        const requestedFile = file ? String(file) : 'config.yml';
+        const targetFile = resolveDataFilePath(DATA_DIR, requestedFile);
+        const relativePath = path.relative(DATA_DIR, targetFile).split(path.sep).join('/');
+
         if (typeof content !== 'string') return res.status(400).json({ error: 'content must be a string' });
-        if (Buffer.byteLength(content, 'utf8') > 250_000) return res.status(413).json({ error: 'config.yml exceeds max size (250KB)' });
+        if (Buffer.byteLength(content, 'utf8') > MAX_META_BYTES) {
+            return res.status(413).json({ error: `${relativePath} exceeds max size (${MAX_META_BYTES} bytes)` });
+        }
 
-        const parsed = parseYamlObject(content, 'config.yml');
-        await writeAtomically(CONFIG_GENERAL_FILE, content);
-        applyRuntimeCorsConfig(parsed.cors || {});
+        await writeAtomically(targetFile, content);
+        if (relativePath === 'config.yml') {
+            const parsed = parseYamlObject(content, 'config.yml');
+            applyRuntimeCorsConfig(parsed?.cors || {});
+        }
 
-        const stats = await fs.stat(CONFIG_GENERAL_FILE);
+        const stats = await fs.stat(targetFile);
         res.json({
             success: true,
-            file: 'config.yml',
+            file: relativePath,
             bytes: Buffer.byteLength(content, 'utf8'),
             updatedAt: stats?.mtime ? new Date(stats.mtime).toISOString() : null
         });

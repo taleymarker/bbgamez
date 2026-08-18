@@ -1,10 +1,10 @@
 {
   "users": [
     {
-      "id": "d3889ca9-943c-49c4-8f93-a4709bf4282f",
+      "id": "030d1a46-3e63-4cef-95c3-e32f45e73174",
       "username": "admin",
       "email": "admin@local.local",
-      "passwordHash": "$2a$10$Bf/8gJC/PfROTAAeQwx61.b5DbviCGOH8PnmVipVs.wTtLguc7BoK",
+      "passwordHash": "$2a$10$xuWIpiKpsmq.h9T9IQJz2e3VCUynk7d/hr9vxBqptmgFft/UJR.1K",
       "favorites": [],
       "profile": {
         "username": "admin",
@@ -23,14 +23,14 @@
       "presence": {
         "online": true,
         "gameId": null,
-        "lastSeen": "2026-08-18T02:56:31.205Z"
+        "lastSeen": "2026-08-18T03:02:49.352Z"
       },
       "loginHistory": [],
       "banned": {
         "active": false
       },
-      "createdAt": "2026-08-18T02:56:31.205Z",
-      "updatedAt": "2026-08-18T02:56:31.205Z",
+      "createdAt": "2026-08-18T03:02:49.352Z",
+      "updatedAt": "2026-08-18T03:02:49.352Z",
       "admin": true
     }
   ]

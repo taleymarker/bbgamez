@@ -14,7 +14,29 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const morgan = require('morgan');
 const yaml = require('js-yaml');
-const { ensureDefaultAdminUser, getRequestOrigin, ensureConfigAllowedOrigin, listDataFiles, resolveDataFilePath } = require('./bootstrap');
+const {
+    ensureDefaultAdminUser,
+    getRequestOrigin,
+    ensureConfigAllowedOrigin,
+    listDataFiles,
+    resolveDataFilePath
+} = require('./bootstrap');
+const {
+    isDatabaseEnabled,
+    ensureSchema,
+    readConfigFromDb,
+    writeConfigToDb,
+    loadUsersFromDb,
+    saveUsersToDb,
+    loadGamesFromDb,
+    saveGamesToDb,
+    loadRequestsFromDb,
+    saveRequestsToDb,
+    loadReportsFromDb,
+    saveReportsToDb,
+    loadSessionsFromDb,
+    saveSessionsToDb
+} = require('./db');
 
 const APP_VERSION = '3.0.0';
 const PORT = process.env.PORT || 3000;
@@ -354,6 +376,26 @@ async function analyticsEnabled() {
 }
 
 async function loadConfig() {
+    if (isDatabaseEnabled()) {
+        const config = await readConfigFromDb({
+            version: APP_VERSION,
+            maintenanceMode: { enabled: false },
+            uiControls: {},
+            cors: normalizeCorsConfig({}, ENV_CONFIGURED_ORIGINS),
+            features: {},
+            defaults: { presets: BUILT_IN_PRESETS }
+        });
+        const cors = normalizeCorsConfig(config?.cors || {}, ENV_CONFIGURED_ORIGINS);
+        return {
+            version: config?.version || APP_VERSION,
+            maintenanceMode: config?.maintenanceMode || { enabled: false },
+            uiControls: config?.uiControls || {},
+            cors,
+            features: config?.features || {},
+            defaults: (config?.defaults && Object.keys(config.defaults).length ? config.defaults : { presets: BUILT_IN_PRESETS })
+        };
+    }
+
     const legacy = await readJson(LEGACY_CONFIG_FILE, null);
     const general = await readYaml(CONFIG_GENERAL_FILE, legacy || {});
     const features = await readYaml(FEATURES_FILE, legacy?.features || {});
@@ -371,16 +413,31 @@ async function loadConfig() {
 
 async function saveConfig(config) {
     const cors = normalizeCorsConfig(config?.cors || {}, ENV_CONFIGURED_ORIGINS);
-    const general = {
+    const normalized = {
         version: config?.version || APP_VERSION,
         maintenanceMode: config?.maintenanceMode || { enabled: false },
         uiControls: config?.uiControls || {},
+        cors,
+        features: config?.features || {},
+        defaults: config?.defaults || { presets: BUILT_IN_PRESETS }
+    };
+
+    if (isDatabaseEnabled()) {
+        await writeConfigToDb(normalized);
+        applyRuntimeCorsConfig(cors);
+        return;
+    }
+
+    const general = {
+        version: normalized.version,
+        maintenanceMode: normalized.maintenanceMode,
+        uiControls: normalized.uiControls,
         cors
     };
     await writeYaml(CONFIG_GENERAL_FILE, general);
     applyRuntimeCorsConfig(cors);
-    await writeYaml(FEATURES_FILE, config?.features || {});
-    await writeYaml(DEFAULTS_FILE, config?.defaults || { presets: BUILT_IN_PRESETS });
+    await writeYaml(FEATURES_FILE, normalized.features);
+    await writeYaml(DEFAULTS_FILE, normalized.defaults);
 }
 
 async function migrateLegacyConfig() {
@@ -589,12 +646,24 @@ function defaultSettingsFromConfig(config) {
 }
 
 async function loadGames() {
+    if (isDatabaseEnabled()) {
+        return loadGamesFromDb();
+    }
     const data = await readJson(GAMES_FILE, []);
     const games = Array.isArray(data) ? data : data.games || [];
     return games.map((g) => ({ ...g, disabled: !!g.disabled, disabledMessage: g.disabledMessage || '' }));
 }
 
 async function saveGames(games) {
+    if (isDatabaseEnabled()) {
+        await saveGamesToDb(games);
+        try {
+            await regenerateSitemap(games);
+        } catch (err) {
+            console.error('Failed to regenerate sitemap after saving games', err);
+        }
+        return;
+    }
     await writeJson(GAMES_FILE, games);
     try {
         await regenerateSitemap(games);
@@ -628,6 +697,9 @@ async function regenerateSitemap(games, baseUrl) {
 }
 
 async function loadUsers() {
+    if (isDatabaseEnabled()) {
+        return loadUsersFromDb();
+    }
     const data = await readJson(USERS_FILE, { users: [] });
     const users = Array.isArray(data) ? data : data.users || [];
     return users.map((u) => ({
@@ -640,24 +712,42 @@ async function loadUsers() {
 }
 
 async function saveUsers(users) {
+    if (isDatabaseEnabled()) {
+        await saveUsersToDb(users);
+        return;
+    }
     await writeJson(USERS_FILE, { users });
 }
 
 async function loadRequests() {
+    if (isDatabaseEnabled()) {
+        return loadRequestsFromDb();
+    }
     const data = await readJson(REQUESTS_FILE, { requests: [] });
     return Array.isArray(data) ? data : data.requests || [];
 }
 
 async function saveRequests(requests) {
+    if (isDatabaseEnabled()) {
+        await saveRequestsToDb(requests);
+        return;
+    }
     await writeJson(REQUESTS_FILE, { requests });
 }
 
 async function loadReports() {
+    if (isDatabaseEnabled()) {
+        return loadReportsFromDb();
+    }
     const data = await readJson(REPORTS_FILE, { reports: [] });
     return Array.isArray(data) ? data : data.reports || [];
 }
 
 async function saveReports(reports) {
+    if (isDatabaseEnabled()) {
+        await saveReportsToDb(reports);
+        return;
+    }
     await writeJson(REPORTS_FILE, { reports });
 }
 
@@ -729,11 +819,18 @@ function clearAuthCookies(res) {
 }
 
 async function loadSessions() {
+    if (isDatabaseEnabled()) {
+        return loadSessionsFromDb();
+    }
     const data = await readJson(SESSION_FILE, { sessions: [] });
     return Array.isArray(data) ? data : data.sessions || [];
 }
 
 async function saveSessions(sessions) {
+    if (isDatabaseEnabled()) {
+        await saveSessionsToDb(sessions);
+        return;
+    }
     await writeJson(SESSION_FILE, { sessions });
 }
 
@@ -1003,6 +1100,51 @@ setTimeout(() => { flushAnalytics().catch(() => {}); }, 2000);
 
 // --- Ensure data files exist on startup
 (async () => {
+    if (isDatabaseEnabled()) {
+        await ensureSchema();
+        const config = await readConfigFromDb(null);
+        if (!config) {
+            await writeConfigToDb({
+                version: APP_VERSION,
+                maintenanceMode: { enabled: false },
+                uiControls: {},
+                cors: normalizeCorsConfig({}, ENV_CONFIGURED_ORIGINS),
+                features: {},
+                defaults: { presets: BUILT_IN_PRESETS }
+            });
+        }
+        const existingUsers = await loadUsersFromDb();
+        if (!existingUsers.length) {
+            const adminUser = {
+                id: crypto.randomUUID(),
+                username: 'admin',
+                email: 'admin@local.local',
+                passwordHash: await bcrypt.hash('password', 10),
+                favorites: [],
+                profile: {
+                    username: 'admin',
+                    accentColor: '#58a6ff',
+                    avatar: null,
+                    lastPlayed: [],
+                    playtime: {}
+                },
+                settings: {},
+                friends: { accepted: [], incoming: [], outgoing: [], blocked: [] },
+                presence: { online: true, gameId: null, lastSeen: new Date().toISOString() },
+                loginHistory: [],
+                banned: { active: false },
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                admin: true
+            };
+            await saveUsersToDb([adminUser]);
+            console.log('Created default admin account: admin / password');
+        }
+        const defaultConfig = await loadConfig();
+        applyRuntimeCorsConfig(defaultConfig.cors || {});
+        return;
+    }
+
     await fs.mkdir(DATA_DIR, { recursive: true });
     await ensureFile(USERS_FILE, { users: [] });
     await ensureFile(GAMES_FILE, []);

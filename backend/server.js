@@ -35,7 +35,9 @@ const {
     loadReportsFromDb,
     saveReportsToDb,
     loadSessionsFromDb,
-    saveSessionsToDb
+    saveSessionsToDb,
+    loadAnalyticsSeriesFromDb,
+    appendAnalyticsEntryToDb
 } = require('./db');
 
 const APP_VERSION = '3.0.0';
@@ -355,10 +357,19 @@ async function ensureAnalyticsFiles() {
 }
 
 async function loadAnalyticsFile(file) {
+    if (isDatabaseEnabled()) {
+        const key = file === ANALYTICS_GAMES_FILE ? 'games' : 'players';
+        return loadAnalyticsSeriesFromDb(key);
+    }
     return readJson(file, { entries: [] });
 }
 
 async function appendAnalyticsEntry(file, entry, maxEntries = ANALYTICS_RETENTION_MINUTES) {
+    if (isDatabaseEnabled()) {
+        const key = file === ANALYTICS_GAMES_FILE ? 'games' : 'players';
+        await appendAnalyticsEntryToDb(key, entry, maxEntries);
+        return;
+    }
     const data = await loadAnalyticsFile(file);
     const entries = Array.isArray(data.entries) ? data.entries : [];
     entries.push(entry);

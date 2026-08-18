@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -23,46 +24,241 @@ async function withDatabase(fn, fallbackValue) {
 async function ensureSchema() {
   if (!pool) return false;
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_data (
-      key TEXT PRIMARY KEY,
-      value JSONB NOT NULL,
+    CREATE TABLE IF NOT EXISTS app_config (
+      id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      data JSONB NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_users (
+      id TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_games (
+      id TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_requests (
+      id TEXT PRIMARY KEY,
+      row_order INTEGER NOT NULL DEFAULT 0,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_reports (
+      id TEXT PRIMARY KEY,
+      row_order INTEGER NOT NULL DEFAULT 0,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      id TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_analytics_players (
+      id BIGSERIAL PRIMARY KEY,
+      captured_at TIMESTAMPTZ NOT NULL,
+      data JSONB NOT NULL
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_analytics_games (
+      id BIGSERIAL PRIMARY KEY,
+      captured_at TIMESTAMPTZ NOT NULL,
+      data JSONB NOT NULL
+    )
+  `);
+
+  // Migrate from legacy app_data only when destination tables are empty.
+  await migrateFromLegacyAppData();
   return true;
 }
 
-async function readJsonCollection(key, fallbackValue) {
-  if (!pool) return fallbackValue;
-  const { rows } = await pool.query('SELECT value FROM app_data WHERE key = $1', [key]);
-  if (!rows.length) return fallbackValue;
-  return rows[0].value;
+async function migrateFromLegacyAppData() {
+  if (!pool) return;
+  const exists = await pool.query("SELECT to_regclass('public.app_data') AS name");
+  if (!exists.rows[0]?.name) return;
+
+  const [cfgCount, userCount, gameCount, requestCount, reportCount, sessionCount, playersCount, gamesAnalyticsCount] = await Promise.all([
+    pool.query('SELECT COUNT(*)::int AS count FROM app_config'),
+    pool.query('SELECT COUNT(*)::int AS count FROM app_users'),
+    pool.query('SELECT COUNT(*)::int AS count FROM app_games'),
+    pool.query('SELECT COUNT(*)::int AS count FROM app_requests'),
+    pool.query('SELECT COUNT(*)::int AS count FROM app_reports'),
+    pool.query('SELECT COUNT(*)::int AS count FROM app_sessions'),
+    pool.query('SELECT COUNT(*)::int AS count FROM app_analytics_players'),
+    pool.query('SELECT COUNT(*)::int AS count FROM app_analytics_games')
+  ]);
+
+  const readLegacy = async (key, fallback) => {
+    const { rows } = await pool.query('SELECT value FROM app_data WHERE key = $1', [key]);
+    if (!rows.length) return fallback;
+    return rows[0].value;
+  };
+
+  if ((cfgCount.rows[0]?.count || 0) === 0) {
+    const cfg = await readLegacy('config', null);
+    if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+      await writeConfigToDb(cfg);
+    }
+  }
+
+  if ((userCount.rows[0]?.count || 0) === 0) {
+    const raw = await readLegacy('users', { users: [] });
+    const users = Array.isArray(raw) ? raw : (raw.users || []);
+    await saveUsersToDb(users);
+  }
+
+  if ((gameCount.rows[0]?.count || 0) === 0) {
+    const raw = await readLegacy('games', []);
+    const games = Array.isArray(raw) ? raw : (raw.games || []);
+    await saveGamesToDb(games);
+  }
+
+  if ((requestCount.rows[0]?.count || 0) === 0) {
+    const raw = await readLegacy('requests', { requests: [] });
+    const requests = Array.isArray(raw) ? raw : (raw.requests || []);
+    await saveRequestsToDb(requests);
+  }
+
+  if ((reportCount.rows[0]?.count || 0) === 0) {
+    const raw = await readLegacy('reports', { reports: [] });
+    const reports = Array.isArray(raw) ? raw : (raw.reports || []);
+    await saveReportsToDb(reports);
+  }
+
+  if ((sessionCount.rows[0]?.count || 0) === 0) {
+    const raw = await readLegacy('sessions', { sessions: [] });
+    const sessions = Array.isArray(raw) ? raw : (raw.sessions || []);
+    await saveSessionsToDb(sessions);
+  }
+
+  if ((playersCount.rows[0]?.count || 0) === 0) {
+    const raw = await readLegacy('analytics_players', { entries: [] });
+    const entries = Array.isArray(raw?.entries) ? raw.entries : [];
+    for (const entry of entries) {
+      // eslint-disable-next-line no-await-in-loop
+      await appendAnalyticsEntryToDb('players', entry, Number.MAX_SAFE_INTEGER);
+    }
+  }
+
+  if ((gamesAnalyticsCount.rows[0]?.count || 0) === 0) {
+    const raw = await readLegacy('analytics_games', { entries: [] });
+    const entries = Array.isArray(raw?.entries) ? raw.entries : [];
+    for (const entry of entries) {
+      // eslint-disable-next-line no-await-in-loop
+      await appendAnalyticsEntryToDb('games', entry, Number.MAX_SAFE_INTEGER);
+    }
+  }
 }
 
-async function writeJsonCollection(key, value) {
+function normalizeArray(value, fallback = []) {
+  return Array.isArray(value) ? value : fallback;
+}
+
+function safeString(value, fallback) {
+  const text = String(value || '').trim();
+  return text || fallback;
+}
+
+async function replaceRows(tableName, rows) {
   if (!pool) return;
-  await pool.query(
-    `INSERT INTO app_data (key, value, updated_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (key)
-     DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-    [key, value]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM ${tableName}`);
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i] || {};
+      const id = safeString(row.id, cryptoRandomId());
+      await client.query(
+        `INSERT INTO ${tableName} (id, row_order, data, updated_at) VALUES ($1, $2, $3, NOW())`,
+        [id, i, row]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+function cryptoRandomId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function replaceRowsById(tableName, rows) {
+  if (!pool) return;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM ${tableName}`);
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i] || {};
+      const id = safeString(row.id, cryptoRandomId());
+      await client.query(
+        `INSERT INTO ${tableName} (id, data, updated_at) VALUES ($1, $2, NOW())`,
+        [id, row]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function readOrderedRows(tableName) {
+  if (!pool) return [];
+  const { rows } = await pool.query(`SELECT data FROM ${tableName} ORDER BY row_order ASC, updated_at ASC`);
+  return rows.map((r) => r.data).filter(Boolean);
+}
+
+async function readRowsById(tableName) {
+  if (!pool) return [];
+  const { rows } = await pool.query(`SELECT data FROM ${tableName} ORDER BY updated_at ASC`);
+  return rows.map((r) => r.data).filter(Boolean);
 }
 
 async function readConfigFromDb(fallbackValue = {}) {
-  const data = await readJsonCollection('config', fallbackValue);
+  if (!pool) return fallbackValue;
+  const { rows } = await pool.query('SELECT data FROM app_config WHERE id = 1');
+  if (!rows.length) return fallbackValue;
+  const data = rows[0].data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) return fallbackValue;
   return data;
 }
 
 async function writeConfigToDb(config) {
-  await writeJsonCollection('config', config || {});
+  if (!pool) return;
+  await pool.query(
+    `INSERT INTO app_config (id, data, updated_at)
+     VALUES (1, $1, NOW())
+     ON CONFLICT (id)
+     DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+    [config || {}]
+  );
 }
 
 async function loadUsersFromDb() {
-  const data = await readJsonCollection('users', { users: [] });
-  const users = Array.isArray(data) ? data : data.users || [];
+  const users = await readRowsById('app_users');
   return users.map((u) => ({
     ...u,
     admin: !!u.admin,
@@ -73,52 +269,78 @@ async function loadUsersFromDb() {
 }
 
 async function saveUsersToDb(users) {
-  await writeJsonCollection('users', { users });
+  await replaceRowsById('app_users', normalizeArray(users));
 }
 
 async function loadGamesFromDb() {
-  const data = await readJsonCollection('games', []);
-  const games = Array.isArray(data) ? data : (data.games || []);
+  const games = await readRowsById('app_games');
   return games.map((g) => ({ ...g, disabled: !!g.disabled, disabledMessage: g.disabledMessage || '' }));
 }
 
 async function saveGamesToDb(games) {
-  await writeJsonCollection('games', games);
+  await replaceRowsById('app_games', normalizeArray(games));
 }
 
 async function loadRequestsFromDb() {
-  const data = await readJsonCollection('requests', { requests: [] });
-  return Array.isArray(data) ? data : (data.requests || []);
+  return readOrderedRows('app_requests');
 }
 
 async function saveRequestsToDb(requests) {
-  await writeJsonCollection('requests', { requests });
+  await replaceRows('app_requests', normalizeArray(requests));
 }
 
 async function loadReportsFromDb() {
-  const data = await readJsonCollection('reports', { reports: [] });
-  return Array.isArray(data) ? data : (data.reports || []);
+  return readOrderedRows('app_reports');
 }
 
 async function saveReportsToDb(reports) {
-  await writeJsonCollection('reports', { reports });
+  await replaceRows('app_reports', normalizeArray(reports));
 }
 
 async function loadSessionsFromDb() {
-  const data = await readJsonCollection('sessions', { sessions: [] });
-  return Array.isArray(data) ? data : (data.sessions || []);
+  return readRowsById('app_sessions');
 }
 
 async function saveSessionsToDb(sessions) {
-  await writeJsonCollection('sessions', { sessions });
+  await replaceRowsById('app_sessions', normalizeArray(sessions));
+}
+
+function analyticsTable(name) {
+  return name === 'games' ? 'app_analytics_games' : 'app_analytics_players';
+}
+
+async function loadAnalyticsSeriesFromDb(name) {
+  if (!pool) return { entries: [] };
+  const table = analyticsTable(name);
+  const { rows } = await pool.query(
+    `SELECT data FROM ${table} ORDER BY captured_at ASC, id ASC`
+  );
+  return { entries: rows.map((r) => r.data).filter(Boolean) };
+}
+
+async function appendAnalyticsEntryToDb(name, entry, maxEntries) {
+  if (!pool) return;
+  const table = analyticsTable(name);
+  const parsedTime = Date.parse(entry?.time || '');
+  const capturedAt = Number.isFinite(parsedTime) ? new Date(parsedTime).toISOString() : new Date().toISOString();
+  await pool.query(`INSERT INTO ${table} (captured_at, data) VALUES ($1, $2)`, [capturedAt, entry]);
+  if (Number.isFinite(maxEntries) && maxEntries > 0) {
+    await pool.query(
+      `DELETE FROM ${table}
+       WHERE id IN (
+         SELECT id FROM ${table}
+         ORDER BY captured_at DESC, id DESC
+         OFFSET $1
+       )`,
+      [maxEntries]
+    );
+  }
 }
 
 module.exports = {
   isDatabaseEnabled,
   ensureSchema,
   withDatabase,
-  readJsonCollection,
-  writeJsonCollection,
   readConfigFromDb,
   writeConfigToDb,
   loadUsersFromDb,
@@ -130,5 +352,7 @@ module.exports = {
   loadReportsFromDb,
   saveReportsToDb,
   loadSessionsFromDb,
-  saveSessionsToDb
+  saveSessionsToDb,
+  loadAnalyticsSeriesFromDb,
+  appendAnalyticsEntryToDb
 };

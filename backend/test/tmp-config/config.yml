@@ -1,0 +1,4 @@
+cors:
+  allowedOrigins:
+    - http://localhost:3000
+    - https://example.herokuapp.com

@@ -14,6 +14,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const morgan = require('morgan');
 const yaml = require('js-yaml');
+const { ensureDefaultAdminUser, getRequestOrigin, ensureConfigAllowedOrigin } = require('./bootstrap');
 
 const APP_VERSION = '3.0.0';
 const PORT = process.env.PORT || 3000;
@@ -167,6 +168,21 @@ function applyRuntimeCorsConfig(config) {
     runtimeCorsConfig = normalizeCorsConfig(config || {}, ENV_CONFIGURED_ORIGINS);
 }
 
+async function ensureCurrentSiteAllowedOrigin(req) {
+    const siteOrigin = normalizeOrigin(PUBLIC_BASE_URL || getRequestOrigin(req));
+    const requestOrigin = normalizeOrigin(req.header('Origin'));
+    if (!siteOrigin || !requestOrigin || requestOrigin !== siteOrigin) return;
+
+    if (!runtimeCorsConfig.allowedOrigins.includes(siteOrigin)) {
+        runtimeCorsConfig = {
+            ...runtimeCorsConfig,
+            allowedOrigins: [...new Set([...runtimeCorsConfig.allowedOrigins, siteOrigin])]
+        };
+    }
+
+    await ensureConfigAllowedOrigin(CONFIG_GENERAL_FILE, siteOrigin);
+}
+
 // In-memory heartbeat tracking for guests (non-authenticated visitors)
 const guestHeartbeats = new Map();
 
@@ -183,8 +199,14 @@ app.use(cors((req, callback) => {
     const currentCors = runtimeCorsConfig;
     const requestOrigin = req.header('Origin');
     const normalizedOrigin = normalizeOrigin(requestOrigin);
+    const siteOrigin = normalizeOrigin(PUBLIC_BASE_URL || getRequestOrigin(req));
+    const isSameSite = !!(normalizedOrigin && siteOrigin && normalizedOrigin === siteOrigin);
     const isAllowed = (!requestOrigin && currentCors.allowNoOrigin)
-        || (normalizedOrigin && currentCors.allowedOrigins.includes(normalizedOrigin));
+        || (normalizedOrigin && (currentCors.allowedOrigins.includes(normalizedOrigin) || isSameSite));
+
+    if (isSameSite && !currentCors.allowedOrigins.includes(siteOrigin)) {
+        void ensureCurrentSiteAllowedOrigin(req);
+    }
 
     if (!isAllowed) return callback(new Error('Origin not allowed by CORS'));
 
@@ -993,6 +1015,17 @@ setTimeout(() => { flushAnalytics().catch(() => {}); }, 2000);
     });
     await ensureYamlFile(FEATURES_FILE, {});
     await ensureYamlFile(DEFAULTS_FILE, { presets: BUILT_IN_PRESETS });
+
+    const seededAdmin = await ensureDefaultAdminUser({
+        usersPath: USERS_FILE,
+        configPath: CONFIG_GENERAL_FILE,
+        username: 'admin',
+        password: 'password'
+    });
+    if (seededAdmin) {
+        console.log('Created default admin account: admin / password');
+    }
+
     const config = await loadConfig();
     applyRuntimeCorsConfig(config.cors || {});
     await ensureFile(REQUESTS_FILE, { requests: [] });

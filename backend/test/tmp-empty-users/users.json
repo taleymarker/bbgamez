@@ -1,0 +1,37 @@
+{
+  "users": [
+    {
+      "id": "d3889ca9-943c-49c4-8f93-a4709bf4282f",
+      "username": "admin",
+      "email": "admin@local.local",
+      "passwordHash": "$2a$10$Bf/8gJC/PfROTAAeQwx61.b5DbviCGOH8PnmVipVs.wTtLguc7BoK",
+      "favorites": [],
+      "profile": {
+        "username": "admin",
+        "accentColor": "#58a6ff",
+        "avatar": null,
+        "lastPlayed": [],
+        "playtime": {}
+      },
+      "settings": {},
+      "friends": {
+        "accepted": [],
+        "incoming": [],
+        "outgoing": [],
+        "blocked": []
+      },
+      "presence": {
+        "online": true,
+        "gameId": null,
+        "lastSeen": "2026-08-18T02:56:31.205Z"
+      },
+      "loginHistory": [],
+      "banned": {
+        "active": false
+      },
+      "createdAt": "2026-08-18T02:56:31.205Z",
+      "updatedAt": "2026-08-18T02:56:31.205Z",
+      "admin": true
+    }
+  ]
+}

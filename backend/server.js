@@ -1112,48 +1112,51 @@ setTimeout(() => { flushAnalytics().catch(() => {}); }, 2000);
 // --- Ensure data files exist on startup
 (async () => {
     if (isDatabaseEnabled()) {
-        await ensureSchema();
-        const config = await readConfigFromDb(null);
-        if (!config) {
-            await writeConfigToDb({
-                version: APP_VERSION,
-                maintenanceMode: { enabled: false },
-                uiControls: {},
-                cors: normalizeCorsConfig({}, ENV_CONFIGURED_ORIGINS),
-                features: {},
-                defaults: { presets: BUILT_IN_PRESETS }
-            });
-        }
-        const existingUsers = await loadUsersFromDb();
-        if (!existingUsers.length) {
-            const adminUser = {
-                id: crypto.randomUUID(),
-                username: 'admin',
-                email: 'admin@local.local',
-                passwordHash: await bcrypt.hash('password', 10),
-                favorites: [],
-                profile: {
+        const schemaReady = await ensureSchema();
+        if (schemaReady && isDatabaseEnabled()) {
+            const config = await readConfigFromDb(null);
+            if (!config) {
+                await writeConfigToDb({
+                    version: APP_VERSION,
+                    maintenanceMode: { enabled: false },
+                    uiControls: {},
+                    cors: normalizeCorsConfig({}, ENV_CONFIGURED_ORIGINS),
+                    features: {},
+                    defaults: { presets: BUILT_IN_PRESETS }
+                });
+            }
+            const existingUsers = await loadUsersFromDb();
+            if (!existingUsers.length) {
+                const adminUser = {
+                    id: crypto.randomUUID(),
                     username: 'admin',
-                    accentColor: '#58a6ff',
-                    avatar: null,
-                    lastPlayed: [],
-                    playtime: {}
-                },
-                settings: {},
-                friends: { accepted: [], incoming: [], outgoing: [], blocked: [] },
-                presence: { online: true, gameId: null, lastSeen: new Date().toISOString() },
-                loginHistory: [],
-                banned: { active: false },
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                admin: true
-            };
-            await saveUsersToDb([adminUser]);
-            console.log('Created default admin account: admin / password');
+                    email: 'admin@local.local',
+                    passwordHash: await bcrypt.hash('password', 10),
+                    favorites: [],
+                    profile: {
+                        username: 'admin',
+                        accentColor: '#58a6ff',
+                        avatar: null,
+                        lastPlayed: [],
+                        playtime: {}
+                    },
+                    settings: {},
+                    friends: { accepted: [], incoming: [], outgoing: [], blocked: [] },
+                    presence: { online: true, gameId: null, lastSeen: new Date().toISOString() },
+                    loginHistory: [],
+                    banned: { active: false },
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                    admin: true
+                };
+                await saveUsersToDb([adminUser]);
+                console.log('Created default admin account: admin / password');
+            }
+            const defaultConfig = await loadConfig();
+            applyRuntimeCorsConfig(defaultConfig.cors || {});
+            return;
         }
-        const defaultConfig = await loadConfig();
-        applyRuntimeCorsConfig(defaultConfig.cors || {});
-        return;
+        console.warn('Database is unavailable; continuing with file-backed storage for this process.');
     }
 
     await fs.mkdir(DATA_DIR, { recursive: true });

@@ -7,84 +7,92 @@ const pool = DATABASE_URL ? new Pool({
   ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false }
 }) : null;
 
+let dbDisabledReason = null;
+
+function disableDatabase(err) {
+  if (dbDisabledReason) return;
+  dbDisabledReason = err?.message || String(err || 'Unknown database error');
+  console.error('Database disabled for this process. Falling back to file storage:', dbDisabledReason);
+}
+
 function isDatabaseEnabled() {
-  return Boolean(pool);
+  return Boolean(pool) && !dbDisabledReason;
 }
 
 async function withDatabase(fn, fallbackValue) {
-  if (!pool) return fallbackValue;
+  if (!isDatabaseEnabled()) return fallbackValue;
   try {
     return await fn(pool);
   } catch (err) {
-    console.warn('Database operation failed, falling back to legacy file storage:', err.message || err);
+    disableDatabase(err);
     return fallbackValue;
   }
 }
 
 async function ensureSchema() {
-  if (!pool) return false;
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_config (
-      id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-      data JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_users (
-      id TEXT PRIMARY KEY,
-      data JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_games (
-      id TEXT PRIMARY KEY,
-      data JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_requests (
-      id TEXT PRIMARY KEY,
-      row_order INTEGER NOT NULL DEFAULT 0,
-      data JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_reports (
-      id TEXT PRIMARY KEY,
-      row_order INTEGER NOT NULL DEFAULT 0,
-      data JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_sessions (
-      id TEXT PRIMARY KEY,
-      data JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_analytics_players (
-      id BIGSERIAL PRIMARY KEY,
-      captured_at TIMESTAMPTZ NOT NULL,
-      data JSONB NOT NULL
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_analytics_games (
-      id BIGSERIAL PRIMARY KEY,
-      captured_at TIMESTAMPTZ NOT NULL,
-      data JSONB NOT NULL
-    )
-  `);
+  return withDatabase(async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_config (
+        id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_users (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_games (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_requests (
+        id TEXT PRIMARY KEY,
+        row_order INTEGER NOT NULL DEFAULT 0,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_reports (
+        id TEXT PRIMARY KEY,
+        row_order INTEGER NOT NULL DEFAULT 0,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_sessions (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_analytics_players (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TIMESTAMPTZ NOT NULL,
+        data JSONB NOT NULL
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_analytics_games (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TIMESTAMPTZ NOT NULL,
+        data JSONB NOT NULL
+      )
+    `);
 
-  // Migrate from legacy app_data only when destination tables are empty.
-  await migrateFromLegacyAppData();
-  return true;
+    await migrateFromLegacyAppData();
+    return true;
+  }, false);
 }
 
 async function migrateFromLegacyAppData() {

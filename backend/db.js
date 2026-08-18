@@ -182,27 +182,47 @@ function safeString(value, fallback) {
   return text || fallback;
 }
 
-async function replaceRows(tableName, rows) {
-  if (!pool) return;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(`DELETE FROM ${tableName}`);
-    for (let i = 0; i < rows.length; i += 1) {
-      const row = rows[i] || {};
-      const id = safeString(row.id, cryptoRandomId());
-      await client.query(
-        `INSERT INTO ${tableName} (id, row_order, data, updated_at) VALUES ($1, $2, $3, NOW())`,
-        [id, i, row]
-      );
-    }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+function dedupeRowsById(rows) {
+  const map = new Map();
+  for (const row of normalizeArray(rows)) {
+    const candidate = row || {};
+    const id = safeString(candidate.id, cryptoRandomId());
+    map.set(id, { ...candidate, id });
   }
+  return Array.from(map.values());
+}
+
+async function replaceRows(tableName, rows) {
+  return withDatabase(async () => {
+    const normalized = dedupeRowsById(rows);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (let i = 0; i < normalized.length; i += 1) {
+        const row = normalized[i];
+        await client.query(
+          `INSERT INTO ${tableName} (id, row_order, data, updated_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (id)
+           DO UPDATE SET row_order = EXCLUDED.row_order, data = EXCLUDED.data, updated_at = NOW()`,
+          [row.id, i, row]
+        );
+      }
+
+      if (normalized.length) {
+        const ids = normalized.map((row) => row.id);
+        await client.query(`DELETE FROM ${tableName} WHERE id <> ALL($1::text[])`, [ids]);
+      } else {
+        await client.query(`DELETE FROM ${tableName}`);
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }, undefined);
 }
 
 function cryptoRandomId() {
@@ -211,58 +231,71 @@ function cryptoRandomId() {
 }
 
 async function replaceRowsById(tableName, rows) {
-  if (!pool) return;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(`DELETE FROM ${tableName}`);
-    for (let i = 0; i < rows.length; i += 1) {
-      const row = rows[i] || {};
-      const id = safeString(row.id, cryptoRandomId());
-      await client.query(
-        `INSERT INTO ${tableName} (id, data, updated_at) VALUES ($1, $2, NOW())`,
-        [id, row]
-      );
+  return withDatabase(async () => {
+    const normalized = dedupeRowsById(rows);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const row of normalized) {
+        await client.query(
+          `INSERT INTO ${tableName} (id, data, updated_at)
+           VALUES ($1, $2, NOW())
+           ON CONFLICT (id)
+           DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+          [row.id, row]
+        );
+      }
+
+      if (normalized.length) {
+        const ids = normalized.map((row) => row.id);
+        await client.query(`DELETE FROM ${tableName} WHERE id <> ALL($1::text[])`, [ids]);
+      } else {
+        await client.query(`DELETE FROM ${tableName}`);
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  }, undefined);
 }
 
 async function readOrderedRows(tableName) {
-  if (!pool) return [];
-  const { rows } = await pool.query(`SELECT data FROM ${tableName} ORDER BY row_order ASC, updated_at ASC`);
-  return rows.map((r) => r.data).filter(Boolean);
+  return withDatabase(async () => {
+    const { rows } = await pool.query(`SELECT data FROM ${tableName} ORDER BY row_order ASC, updated_at ASC`);
+    return rows.map((r) => r.data).filter(Boolean);
+  }, []);
 }
 
 async function readRowsById(tableName) {
-  if (!pool) return [];
-  const { rows } = await pool.query(`SELECT data FROM ${tableName} ORDER BY updated_at ASC`);
-  return rows.map((r) => r.data).filter(Boolean);
+  return withDatabase(async () => {
+    const { rows } = await pool.query(`SELECT data FROM ${tableName} ORDER BY updated_at ASC`);
+    return rows.map((r) => r.data).filter(Boolean);
+  }, []);
 }
 
 async function readConfigFromDb(fallbackValue = {}) {
-  if (!pool) return fallbackValue;
-  const { rows } = await pool.query('SELECT data FROM app_config WHERE id = 1');
-  if (!rows.length) return fallbackValue;
-  const data = rows[0].data;
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return fallbackValue;
-  return data;
+  return withDatabase(async () => {
+    const { rows } = await pool.query('SELECT data FROM app_config WHERE id = 1');
+    if (!rows.length) return fallbackValue;
+    const data = rows[0].data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return fallbackValue;
+    return data;
+  }, fallbackValue);
 }
 
 async function writeConfigToDb(config) {
-  if (!pool) return;
-  await pool.query(
-    `INSERT INTO app_config (id, data, updated_at)
-     VALUES (1, $1, NOW())
-     ON CONFLICT (id)
-     DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-    [config || {}]
-  );
+  await withDatabase(async () => {
+    await pool.query(
+      `INSERT INTO app_config (id, data, updated_at)
+       VALUES (1, $1, NOW())
+       ON CONFLICT (id)
+       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [config || {}]
+    );
+  }, undefined);
 }
 
 async function loadUsersFromDb() {
@@ -318,31 +351,33 @@ function analyticsTable(name) {
 }
 
 async function loadAnalyticsSeriesFromDb(name) {
-  if (!pool) return { entries: [] };
-  const table = analyticsTable(name);
-  const { rows } = await pool.query(
-    `SELECT data FROM ${table} ORDER BY captured_at ASC, id ASC`
-  );
-  return { entries: rows.map((r) => r.data).filter(Boolean) };
+  return withDatabase(async () => {
+    const table = analyticsTable(name);
+    const { rows } = await pool.query(
+      `SELECT data FROM ${table} ORDER BY captured_at ASC, id ASC`
+    );
+    return { entries: rows.map((r) => r.data).filter(Boolean) };
+  }, { entries: [] });
 }
 
 async function appendAnalyticsEntryToDb(name, entry, maxEntries) {
-  if (!pool) return;
-  const table = analyticsTable(name);
-  const parsedTime = Date.parse(entry?.time || '');
-  const capturedAt = Number.isFinite(parsedTime) ? new Date(parsedTime).toISOString() : new Date().toISOString();
-  await pool.query(`INSERT INTO ${table} (captured_at, data) VALUES ($1, $2)`, [capturedAt, entry]);
-  if (Number.isFinite(maxEntries) && maxEntries > 0) {
-    await pool.query(
-      `DELETE FROM ${table}
-       WHERE id IN (
-         SELECT id FROM ${table}
-         ORDER BY captured_at DESC, id DESC
-         OFFSET $1
-       )`,
-      [maxEntries]
-    );
-  }
+  await withDatabase(async () => {
+    const table = analyticsTable(name);
+    const parsedTime = Date.parse(entry?.time || '');
+    const capturedAt = Number.isFinite(parsedTime) ? new Date(parsedTime).toISOString() : new Date().toISOString();
+    await pool.query(`INSERT INTO ${table} (captured_at, data) VALUES ($1, $2)`, [capturedAt, entry]);
+    if (Number.isFinite(maxEntries) && maxEntries > 0) {
+      await pool.query(
+        `DELETE FROM ${table}
+         WHERE id IN (
+           SELECT id FROM ${table}
+           ORDER BY captured_at DESC, id DESC
+           OFFSET $1
+         )`,
+        [maxEntries]
+      );
+    }
+  }, undefined);
 }
 
 module.exports = {

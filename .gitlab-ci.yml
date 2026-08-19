@@ -1,0 +1,19 @@
+image: node:22
+
+stages:
+  - deploy
+
+pages:
+  stage: deploy
+  script:
+    - npm ci --prefix frontend
+    - npm run build --prefix frontend
+  variables:
+    VITE_BASE_PATH: "/$CI_PROJECT_NAME/"
+  pages:
+    publish: frontend/dist
+  artifacts:
+    paths:
+      - frontend/dist
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

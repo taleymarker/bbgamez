@@ -159,6 +159,20 @@ cd frontend
 npm run build
 ```
 
+## Static frontend deployment
+
+The frontend is deployed independently from the Heroku backend. Configure the
+following build-time variables on each static hosting provider:
+
+- `VITE_API_BASE_URL` — the public Heroku URL, such as `https://bbgamez-api.herokuapp.com`
+- `VITE_BASE_PATH` — `/` for a custom domain, Netlify, or Vercel; use
+	`/<repository-name>/` for a default GitHub Pages project site
+
+Provider configuration is included in `.gitlab-ci.yml`, `netlify.toml`,
+`vercel.json`, and `.github/workflows/deploy-frontend.yml`. Each provider
+installs dependencies and builds only `frontend/`; the root Heroku package
+continues to start `backend/`.
+
 Start the backend in production mode:
 
 ```bash
